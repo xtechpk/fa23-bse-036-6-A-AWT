@@ -1,0 +1,64 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =======================
+// ENUMS (Global, not tenant-scoped)
+// =======================
+enum Role {
+  SUPERADMIN
+  STORE_ADMIN
+  STORE_EMPLOYEE
+  DOCTOR
+  RECEPTIONIST
+  LAB_ATTENDANT
+}
+
+
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+
+
+// =======================
+// USER & HOSPITAL MODELS
+// =======================
+/// Represents users in the system, including doctors, receptionists, and store employees.
+/// Supports hierarchical relationships for employee management.
+model User {
+  id       Int    @id @default(autoincrement())
+
+
+  name        String /// Full name of the user
+  address     String /// Residential address
+  city        String /// City of residence
+  phoneNumber String /// Contact phone number
+  email       String @unique /// Unique email per tenant
+  employeeId  String @unique /// Unique employee ID per tenant
+  password    String /// Hashed password (should be hashed in app logic)
+  role        Role /// User role in the system
+
+  otp          String? /// One-time password for authentication
+  otpExpiresAt DateTime? /// Expiration time for OTP
+  isActive     Boolean   @default(true) /// Account activation status
+
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+
+  @@map("users")
+}
+
+
+
