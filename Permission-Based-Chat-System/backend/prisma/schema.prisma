@@ -1,0 +1,377 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────  Enums  ──────────────────────────────────────
+
+enum Role {
+  superadmin
+  admin
+  user
+}
+
+enum MessageType {
+  private
+  group
+}
+
+enum MessageStatus {
+  sent
+  delivered
+  read
+}
+
+enum PermissionStatus {
+  pending
+  approved
+  rejected
+}
+
+enum NotificationType {
+  message
+  permission_request
+  permission_update
+  system
+}
+
+enum FileCategory {
+  chat_attachment
+  avatar
+  other
+}
+
+enum SessionStatus {
+  active
+  revoked
+  blocked
+  expired
+}
+
+enum TwoFactorPurpose {
+  login
+  enable
+}
+
+// ─────────────────────────────  Models  ─────────────────────────────────────
+
+model User {
+  id                 String    @id @default(uuid())
+  name               String
+  registrationNumber String    @unique
+  email              String    @unique
+  password           String
+  role               Role      @default(user)
+  isActive           Boolean   @default(true)
+  twoFactorEnabled   Boolean   @default(false)
+  twoFactorEnabledAt DateTime?
+  avatarFileId       String?   @unique
+  lastSeen           DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  avatarFile              FileAsset?           @relation("UserAvatarFile",           fields: [avatarFileId], references: [id], onDelete: SetNull)
+  uploadedFiles           FileAsset[]          @relation("UserUploadedFiles")
+  createdGroups           Group[]              @relation("GroupCreator")
+  groupMemberships        GroupMember[]
+  sentMessages            Message[]            @relation("MessageSender")
+  receivedMessages        Message[]            @relation("MessageReceiver")
+  permissionRequests      PermissionRequest[]  @relation("PermissionRequester")
+  permissionTargets       PermissionRequest[]  @relation("PermissionTarget")
+  approvedPermissions     PermissionRequest[]  @relation("PermissionApprover")
+  chatPermissionsAsUserA  ChatPermission[]     @relation("ChatPermissionUserA")
+  chatPermissionsAsUserB  ChatPermission[]     @relation("ChatPermissionUserB")
+  approvedChatPermissions ChatPermission[]     @relation("ChatPermissionApprover")
+  notifications           Notification[]       @relation("NotificationRecipient")
+  refreshTokens           RefreshToken[]
+  loginSessions           LoginSession[]       @relation("UserLoginSessions")
+  blockedSessions         LoginSession[]       @relation("SessionBlocker")
+  blockedIps              BlockedIp[]          @relation("IpBlocker")
+  unblockedIps            BlockedIp[]          @relation("IpUnblocker")
+  auditLogs               AuditLog[]           @relation("AuditLogActor")
+  twoFactorChallenges     TwoFactorChallenge[]
+
+  @@index([name])
+  @@index([email])
+  @@index([registrationNumber])
+}
+
+model Group {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  createdBy User          @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  members   GroupMember[]
+  messages  Message[]     @relation("GroupMessages")
+
+  @@index([createdById])
+}
+
+model GroupMember {
+  id       String   @id @default(uuid())
+  groupId  String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+  @@index([groupId])
+}
+
+model Message {
+  id            String        @id @default(uuid())
+  senderId      String
+  receiverId    String?
+  groupId       String?
+  replyToId     String?
+  content       String
+  messageType   MessageType
+  attachments   Json?
+  attachmentIds String[]      @default([])
+  oneTime       Boolean       @default(false)
+  isEdited      Boolean       @default(false)
+  editedAt      DateTime?
+  status        MessageStatus @default(sent)
+  deliveredAt   DateTime?
+  readAt        DateTime?
+  consumedAt    DateTime?
+  seenBy        String[]      @default([])
+  deletedFor    String[]      @default([])
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  sender   User     @relation("MessageSender",   fields: [senderId],   references: [id], onDelete: Cascade)
+  receiver User?    @relation("MessageReceiver", fields: [receiverId], references: [id], onDelete: SetNull)
+  group    Group?   @relation("GroupMessages",   fields: [groupId],   references: [id], onDelete: Cascade)
+  replyTo  Message? @relation("MessageReplies",  fields: [replyToId], references: [id], onDelete: SetNull)
+  replies  Message[] @relation("MessageReplies")
+
+  @@index([senderId, receiverId, createdAt])
+  @@index([groupId, createdAt])
+  @@index([senderId, createdAt])
+}
+
+model FileAsset {
+  id             String       @id @default(uuid())
+  userId         String
+  category       FileCategory
+  folder         String
+  originalName   String
+  storedName     String
+  mimeType       String
+  size           Int
+  extension      String?
+  relativePath   String
+  publicUrl      String
+  isTemporary    Boolean      @default(true)
+  attachedToType String?
+  attachedToId   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  owner         User  @relation("UserUploadedFiles", fields: [userId], references: [id], onDelete: Cascade)
+  avatarForUser User? @relation("UserAvatarFile")
+
+  @@index([userId, category, createdAt])
+  @@index([attachedToType, attachedToId])
+  @@index([isTemporary, createdAt])
+}
+
+model PermissionRequest {
+  id          String           @id @default(uuid())
+  requesterId String
+  targetId    String
+  reason      String
+  status      PermissionStatus @default(pending)
+  approvedBy  String?
+  approvedAt  DateTime?
+  rejectedAt  DateTime?
+  expiresAt   DateTime?
+  adminRemark String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  requester User  @relation("PermissionRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  target    User  @relation("PermissionTarget",    fields: [targetId],    references: [id], onDelete: Cascade)
+  approver  User? @relation("PermissionApprover",  fields: [approvedBy],  references: [id], onDelete: SetNull)
+
+  @@index([requesterId, targetId, status])
+  @@index([status, createdAt])
+}
+
+model ChatPermission {
+  id                   String    @id @default(uuid())
+  userAId              String
+  userBId              String
+  createdFromRequestId String?
+  approvedById         String
+  isActive             Boolean   @default(true)
+  expiresAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  userA      User @relation("ChatPermissionUserA",    fields: [userAId],      references: [id], onDelete: Cascade)
+  userB      User @relation("ChatPermissionUserB",    fields: [userBId],      references: [id], onDelete: Cascade)
+  approvedBy User @relation("ChatPermissionApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+
+  @@unique([userAId, userBId])
+  @@index([isActive, expiresAt])
+}
+
+model Notification {
+  id          String           @id @default(uuid())
+  recipientId String
+  type        NotificationType
+  title       String
+  message     String
+  metadata    Json?
+  isRead      Boolean          @default(false)
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  recipient User @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@index([recipientId, isRead, createdAt])
+}
+
+model RefreshToken {
+  id              String    @id @default(uuid())
+  userId          String
+  sessionId       String?
+  token           String    @unique
+  expiresAt       DateTime
+  isRevoked       Boolean   @default(false)
+  revokedAt       DateTime?
+  replacedByToken String?
+  createdByIp     String?
+  userAgent       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  user    User          @relation(fields: [userId],    references: [id], onDelete: Cascade)
+  session LoginSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRevoked])
+  @@index([sessionId, isRevoked])
+  @@index([expiresAt])
+}
+
+model LoginSession {
+  id                String        @id @default(uuid())
+  userId            String
+  refreshTokenId    String?
+  ipAddress         String?
+  userAgent         String?
+  browser           String?
+  os                String?
+  deviceType        String?
+  country           String?
+  region            String?
+  city              String?
+  zipCode           String?
+  latitude          Float?
+  longitude         Float?
+  accuracyRadius    Float?
+  altitude          Float?
+  locationTimestamp DateTime?
+  status            SessionStatus @default(active)
+  blockedReason     String?
+  blockedById       String?
+  blockedAt         DateTime?
+  revokedAt         DateTime?
+  expiresAt         DateTime?
+  lastSeenAt        DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  user          User           @relation("UserLoginSessions", fields: [userId],      references: [id], onDelete: Cascade)
+  blockedBy     User?          @relation("SessionBlocker",    fields: [blockedById], references: [id], onDelete: SetNull)
+  refreshTokens RefreshToken[]
+
+  @@index([userId, status, createdAt])
+  @@index([ipAddress, status])
+}
+
+model BlockedIp {
+  id            String    @id @default(uuid())
+  ipAddress     String    @unique
+  reason        String?
+  isActive      Boolean   @default(true)
+  blockedById   String?
+  blockedAt     DateTime  @default(now())
+  unblockedById String?
+  unblockedAt   DateTime?
+  unblockReason String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  blockedBy   User? @relation("IpBlocker",   fields: [blockedById],   references: [id], onDelete: SetNull)
+  unblockedBy User? @relation("IpUnblocker", fields: [unblockedById], references: [id], onDelete: SetNull)
+
+  @@index([isActive, blockedAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  action     String
+  targetType String?
+  targetId   String?
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  actor User? @relation("AuditLogActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+model TwoFactorChallenge {
+  id         String           @id @default(uuid())
+  userId     String
+  purpose    TwoFactorPurpose
+  codeHash   String
+  attempts   Int              @default(0)
+  expiresAt  DateTime
+  usedAt     DateTime?
+  ipAddress  String?
+  userAgent  String?
+  browser    String?
+  os         String?
+  deviceType String?
+  metadata   Json?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  // ── Relations ─────────────────────────────────────────────────────────────
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, expiresAt])
+  @@index([expiresAt, usedAt])
+}
