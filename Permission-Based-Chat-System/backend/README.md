@@ -47,6 +47,36 @@ Node.js + Express backend for a role-based, permission-aware, real-time chat pla
 - `admin`: manages groups and permission approvals
 - `superadmin`: can do everything admin can, plus admin-account management
 
+## Functional Requirements
+
+- The system must support user registration, login, token refresh, and logout.
+- The system must enforce role-based access control for `user`, `admin`, and `superadmin` roles.
+- The system must support optional two-factor authentication (2FA) with OTP challenge verification.
+- The system must enforce session-aware authentication, including session revoke and block operations.
+- The system must allow admins to manage groups, including create, update, delete, member add/remove, and ownership transfer.
+- The system must allow direct private messaging between users who belong to the same group.
+- The system must require admin-approved chat permission for private messaging across different groups.
+- The system must support chat permission workflows: request, approve, reject, direct grant, and revoke.
+- The system must support real-time private and group messaging.
+- The system must support message reply, delivery/read states, edit within the allowed time window, and delete modes.
+- The system must support one-time private messages that are consumed on first read.
+- The system must support file uploads for chat attachments and user avatars with validation rules.
+- The system must provide user notifications and mark-as-read functionality.
+- The system must provide admin security features, including blocked IP management and audit log access.
+
+## Non-Functional Requirements
+
+- The backend should provide low-latency real-time messaging over Socket.IO.
+- The API should maintain consistent REST conventions under the `/api` prefix.
+- The system should enforce strong security controls, including JWT validation, authorization middleware, IP blocking, and audit logging.
+- The service should ensure data integrity through PostgreSQL and Prisma ORM.
+- The system should support reliable operation under concurrent users and high-frequency chat events.
+- The platform should enforce input validation and safe error handling on all public endpoints.
+- File upload processing should enforce MIME type and file-size limits.
+- Session and blocked-IP checks should use caching and throttling to reduce database load.
+- The codebase should remain maintainable through modular architecture (controllers, services, middlewares, and routes).
+- The backend should be environment-configurable through `.env`-based settings.
+
 ## Setup
 
 1. Install dependencies:
