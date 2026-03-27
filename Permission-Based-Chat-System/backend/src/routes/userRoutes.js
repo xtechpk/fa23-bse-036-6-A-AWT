@@ -6,6 +6,7 @@ const allowRoles = require('../middlewares/roleMiddleware');
 const validate = require('../middlewares/validateMiddleware');
 const { cacheGet, invalidateOnWrite } = require('../middlewares/cacheMiddleware');
 const {
+  createUserValidator,
   userIdParamValidator,
   updateUserValidator,
   updateUserStatusValidator,
@@ -24,6 +25,7 @@ router.get(
   cacheGet({ resource: 'users', scope: 'global', ttlSeconds: 300 }),
   userController.listUsers
 );
+router.post('/', allowRoles('admin'), createUserValidator, validate, userController.createUser);
 router.get(
   '/search',
   searchUserValidator,
@@ -49,6 +51,7 @@ router.put(
   validate,
   userController.updateUser
 );
+router.delete('/:id', allowRoles('admin'), userIdParamValidator, validate, userController.deleteUser);
 router.patch(
   '/:id/status',
   allowRoles('admin'),

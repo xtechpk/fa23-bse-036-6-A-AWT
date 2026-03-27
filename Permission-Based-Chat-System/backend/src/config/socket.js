@@ -6,7 +6,7 @@ const registerChatSocket = require('../sockets/chatSocket');
 const createSocketServer = (httpServer) => {
   const io = new Server(httpServer, {
     cors: {
-      origin: env.corsOrigin,
+      origin: env.corsOrigins,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     },
     // Tune for high-concurrency workloads.

@@ -42,24 +42,26 @@ const upsertSystemUser = async ({ name, registrationNumber, email, password, rol
   logger.info(`Default ${role} user created successfully`, { email: normalizedEmail });
 };
 
+const upsertRoleBatch = async (entries, role) => {
+  for (const entry of entries) {
+    // Seed sequentially to keep deterministic logs and avoid DB burst on startup.
+    // eslint-disable-next-line no-await-in-loop
+    await upsertSystemUser({
+      name: entry.name,
+      registrationNumber: entry.registrationNumber,
+      email: entry.email,
+      password: entry.password,
+      role,
+    });
+  }
+};
+
 const seedSystemAdmins = async () => {
   await connectDB();
 
-  await upsertSystemUser({
-    name: env.defaultSuperAdmin.name,
-    registrationNumber: env.defaultSuperAdmin.registrationNumber,
-    email: env.defaultSuperAdmin.email,
-    password: env.defaultSuperAdmin.password,
-    role: ROLES.SUPERADMIN,
-  });
-
-  await upsertSystemUser({
-    name: env.defaultAdmin.name,
-    registrationNumber: env.defaultAdmin.registrationNumber,
-    email: env.defaultAdmin.email,
-    password: env.defaultAdmin.password,
-    role: ROLES.ADMIN,
-  });
+  await upsertRoleBatch(env.defaultUsers.superadmins, ROLES.SUPERADMIN);
+  await upsertRoleBatch(env.defaultUsers.admins, ROLES.ADMIN);
+  await upsertRoleBatch(env.defaultUsers.users, ROLES.USER);
 };
 
 seedSystemAdmins()

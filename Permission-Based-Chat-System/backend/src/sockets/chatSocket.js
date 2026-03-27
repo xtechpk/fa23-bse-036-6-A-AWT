@@ -45,6 +45,17 @@ const OBJECT_PAYLOAD_EVENTS = new Set([
 const isPlainObject = (value) =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
+const updateUserLastSeenSafely = async ({ userId, value }) => {
+  const result = await prisma.user.updateMany({
+    where: { id: String(userId) },
+    data: { lastSeen: value },
+  });
+
+  if (result.count === 0) {
+    logger.warn('Skipping lastSeen update because user was not found', { userId });
+  }
+};
+
 const assertSocketSessionActive = async ({ userId, sessionId }) => {
   const session = await prisma.loginSession.findUnique({ where: { id: String(sessionId) } });
   if (!session || session.userId !== String(userId)) {
@@ -193,7 +204,7 @@ const registerChatSocket = (io) => {
       socket.join(getGroupRoom(groupId));
     });
 
-    await prisma.user.update({ where: { id: userId }, data: { lastSeen: null } });
+    await updateUserLastSeenSafely({ userId, value: null });
     await messageService.markPrivateMessagesDelivered({ receiverId: userId });
 
     socket.emit(SOCKET_EVENTS.CONNECTION, {
@@ -372,9 +383,17 @@ const registerChatSocket = (io) => {
     });
 
     socket.on(SOCKET_EVENTS.DISCONNECT, async () => {
-      unregisterUserSocket(userId, socket.id);
-      await prisma.user.update({ where: { id: userId }, data: { lastSeen: new Date() } });
-      logger.info('Socket disconnected', { userId, socketId: socket.id });
+      try {
+        unregisterUserSocket(userId, socket.id);
+        await updateUserLastSeenSafely({ userId, value: new Date() });
+        logger.info('Socket disconnected', { userId, socketId: socket.id });
+      } catch (error) {
+        logger.warn('Socket disconnect cleanup failed', {
+          userId,
+          socketId: socket.id,
+          message: error.message,
+        });
+      }
     });
   });
 };

@@ -1,0 +1,12 @@
+{
+  "name": "permission-based-chat-system",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "dev": "sh -c 'npm --prefix backend run dev & npm --prefix frontend run dev & wait'",
+    "build": "npm --prefix frontend run build",
+    "verify": "npm --prefix backend run test && npm --prefix frontend run build",
+    "test": "npm --prefix backend run test"
+  }
+}

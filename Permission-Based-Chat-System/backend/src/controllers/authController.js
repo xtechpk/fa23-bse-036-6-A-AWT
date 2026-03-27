@@ -2,6 +2,7 @@ const ApiResponse = require('../utils/ApiResponse');
 const authService = require('../services/authService');
 const { buildRequestMeta } = require('../utils/requestContext');
 const asyncHandler = require('../utils/asyncHandler');
+const { getFileAssetsByIds } = require('../services/fileService');
 
 const register = asyncHandler(async (req, res) => {
   const user = await authService.register(req.body);
@@ -125,8 +126,17 @@ const logout = asyncHandler(async (req, res) => {
 });
 
 const me = asyncHandler(async (req, res) => {
+  const avatarAssets = req.user?.avatarFileId
+    ? await getFileAssetsByIds([req.user.avatarFileId])
+    : [];
+  const avatarFile = avatarAssets[0] || null;
+
   return ApiResponse.success(res, {
-    data: req.user,
+    data: {
+      ...req.user,
+      avatar: avatarFile?.publicUrl || null,
+      avatarFile,
+    },
     message: 'Current user fetched successfully',
   });
 });

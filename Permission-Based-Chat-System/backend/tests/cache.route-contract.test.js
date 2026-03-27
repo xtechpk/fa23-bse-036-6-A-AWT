@@ -170,6 +170,7 @@ test('message routes cache contract is correct', () => {
 
   assert.deepEqual(contract.invalidateOnWriteCalls, [
     [
+      'messages-inbox',
       'messages-private-history',
       'messages-group-history',
       'messages-search',
@@ -179,6 +180,7 @@ test('message routes cache contract is correct', () => {
   ]);
 
   assert.deepEqual(contract.cacheGetCalls, [
+    { resource: 'messages-inbox', scope: 'user', ttlSeconds: 30, hasIdentifier: false },
     { resource: 'messages-search', scope: 'user', ttlSeconds: 60, hasIdentifier: false },
     { resource: 'messages-private-history', scope: 'user', ttlSeconds: 60, hasIdentifier: false },
     { resource: 'messages-group-history', scope: 'user', ttlSeconds: 60, hasIdentifier: false },

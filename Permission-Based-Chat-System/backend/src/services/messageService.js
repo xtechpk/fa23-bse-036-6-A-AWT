@@ -44,6 +44,7 @@ const invalidateResources = async (resources = []) => {
 };
 
 const MESSAGE_CACHE_RESOURCES = [
+  'messages-inbox',
   'messages-private-history',
   'messages-group-history',
   'messages-search',
@@ -314,6 +315,43 @@ const assertReplyMessageAllowed = async ({
   return replyMessage;
 };
 
+const hasPrivateMessageHistory = async (userIdA, userIdB, visibleForUserId = null) => {
+  const safeUserIdA = normalizeId(userIdA);
+  const safeUserIdB = normalizeId(userIdB);
+
+  const where = {
+    messageType: MESSAGE_TYPES.PRIVATE,
+    OR: [
+      { senderId: safeUserIdA, receiverId: safeUserIdB },
+      { senderId: safeUserIdB, receiverId: safeUserIdA },
+    ],
+  };
+
+  if (visibleForUserId) {
+    where.NOT = { deletedFor: { has: normalizeId(visibleForUserId) } };
+  }
+
+  const existingMessage = await prisma.message.findFirst({
+    where,
+    select: { id: true },
+  });
+
+  return Boolean(existingMessage);
+};
+
+const hasActiveSession = async (userId) => {
+  const activeSession = await prisma.loginSession.findFirst({
+    where: {
+      userId: normalizeId(userId),
+      status: 'active',
+      expiresAt: { gt: new Date() },
+    },
+    select: { id: true },
+  });
+
+  return Boolean(activeSession);
+};
+
 const sendPrivateMessage = async ({
   senderId,
   receiverId,
@@ -342,7 +380,10 @@ const sendPrivateMessage = async ({
 
   const permissionResult = await isPrivateChatAllowed(safeSenderId, safeReceiverId);
   if (!permissionResult.allowed) {
-    throw new ApiError(403, 'Cross-group private messaging requires admin-approved permission');
+    const alreadyHasThread = await hasPrivateMessageHistory(safeSenderId, safeReceiverId);
+    if (!alreadyHasThread) {
+      throw new ApiError(403, 'Cross-group private messaging requires admin-approved permission');
+    }
   }
 
   await assertReplyMessageAllowed({
@@ -352,7 +393,8 @@ const sendPrivateMessage = async ({
     replyToId,
   });
 
-  const receiverOnline = isUserOnline(safeReceiverId);
+  const receiverOnline =
+    isUserOnline(safeReceiverId) && (await hasActiveSession(safeReceiverId));
   const status = receiverOnline ? MESSAGE_STATUS.DELIVERED : MESSAGE_STATUS.SENT;
   const deliveredAt = receiverOnline ? new Date() : null;
 
@@ -548,7 +590,15 @@ const getPrivateHistory = async ({ userId, otherUserId, page, limit }) => {
 
   const { allowed } = await isPrivateChatAllowed(safeUserId, safeOtherUserId);
   if (!allowed) {
-    throw new ApiError(403, 'You are not allowed to access this private chat history');
+    const hasHistory = await hasPrivateMessageHistory(
+      safeUserId,
+      safeOtherUserId,
+      safeUserId
+    );
+
+    if (!hasHistory) {
+      throw new ApiError(403, 'You are not allowed to access this private chat history');
+    }
   }
 
   const { skip, page: safePage, limit: safeLimit } = sanitizePagination({ page, limit });
@@ -685,6 +735,152 @@ const searchMessages = async ({ userId, query, page, limit }) => {
       pages: Math.ceil(total / safeLimit),
     },
   };
+};
+
+const getInboxConversations = async ({ userId }) => {
+  const safeUserId = normalizeId(userId);
+
+  const memberships = await prisma.groupMember.findMany({
+    where: { userId: safeUserId },
+    select: { groupId: true },
+  });
+  const groupIds = memberships.map((item) => item.groupId);
+
+  const [privateMessages, groupMessages] = await Promise.all([
+    prisma.message.findMany({
+      where: {
+        messageType: MESSAGE_TYPES.PRIVATE,
+        OR: [{ senderId: safeUserId }, { receiverId: safeUserId }],
+        NOT: { deletedFor: { has: safeUserId } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    }),
+    groupIds.length
+      ? prisma.message.findMany({
+          where: {
+            messageType: MESSAGE_TYPES.GROUP,
+            groupId: { in: groupIds },
+            NOT: { deletedFor: { has: safeUserId } },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 500,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const privateMap = new Map();
+  for (const message of privateMessages) {
+    const peerId = normalizeId(
+      normalizeId(message.senderId) === safeUserId ? message.receiverId : message.senderId
+    );
+
+    if (!peerId) {
+      // Skip malformed records.
+      continue;
+    }
+
+    const existing = privateMap.get(peerId) || {
+      type: MESSAGE_TYPES.PRIVATE,
+      threadId: peerId,
+      lastMessageAt: null,
+      lastMessagePreview: '',
+      unreadCount: 0,
+    };
+
+    if (!existing.lastMessageAt) {
+      existing.lastMessageAt = message.createdAt;
+      existing.lastMessagePreview = message.content || '[Attachment]';
+    }
+
+    if (normalizeId(message.receiverId) === safeUserId && message.status !== MESSAGE_STATUS.READ) {
+      existing.unreadCount += 1;
+    }
+
+    privateMap.set(peerId, existing);
+  }
+
+  const groupMap = new Map();
+  for (const message of groupMessages) {
+    const groupId = normalizeId(message.groupId);
+    if (!groupId) {
+      continue;
+    }
+
+    const existing = groupMap.get(groupId) || {
+      type: MESSAGE_TYPES.GROUP,
+      threadId: groupId,
+      lastMessageAt: null,
+      lastMessagePreview: '',
+      unreadCount: 0,
+    };
+
+    if (!existing.lastMessageAt) {
+      existing.lastMessageAt = message.createdAt;
+      existing.lastMessagePreview = message.content || '[Attachment]';
+    }
+
+    const seenBy = Array.isArray(message.seenBy) ? message.seenBy.map((id) => String(id)) : [];
+    if (normalizeId(message.senderId) !== safeUserId && !seenBy.includes(safeUserId)) {
+      existing.unreadCount += 1;
+    }
+
+    groupMap.set(groupId, existing);
+  }
+
+  const [peers, groups] = await Promise.all([
+    privateMap.size
+      ? prisma.user.findMany({
+          where: { id: { in: [...privateMap.keys()] } },
+          select: { id: true, name: true, role: true, registrationNumber: true, avatarFileId: true },
+        })
+      : Promise.resolve([]),
+    groupMap.size
+      ? prisma.group.findMany({
+          where: { id: { in: [...groupMap.keys()] } },
+          select: { id: true, name: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const enrichedPeers = await hydrateUsersWithAvatars(peers);
+  const peerById = new Map(enrichedPeers.map((user) => [user.id, user]));
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+
+  const items = [];
+
+  for (const [peerId, thread] of privateMap.entries()) {
+    const peer = peerById.get(peerId);
+    if (!peer) continue;
+    items.push({
+      id: `private:${peerId}`,
+      type: MESSAGE_TYPES.PRIVATE,
+      threadId: peerId,
+      name: peer.name,
+      unreadCount: thread.unreadCount,
+      lastMessageAt: thread.lastMessageAt,
+      lastMessagePreview: thread.lastMessagePreview,
+      peer: { ...peer, _id: peer.id },
+    });
+  }
+
+  for (const [groupId, thread] of groupMap.entries()) {
+    const group = groupById.get(groupId);
+    if (!group) continue;
+    items.push({
+      id: `group:${groupId}`,
+      type: MESSAGE_TYPES.GROUP,
+      threadId: groupId,
+      name: group.name,
+      unreadCount: thread.unreadCount,
+      lastMessageAt: thread.lastMessageAt,
+      lastMessagePreview: thread.lastMessagePreview,
+      group: { ...group, _id: group.id },
+    });
+  }
+
+  items.sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime());
+  return items;
 };
 
 const markMessageRead = async ({ userId, messageId }) => {
@@ -999,6 +1195,7 @@ const deleteMessage = async ({ userId, messageId, deleteFor = 'me' }) => {
 module.exports = {
   sendPrivateMessage,
   sendGroupMessage,
+  getInboxConversations,
   getPrivateHistory,
   getGroupHistory,
   searchMessages,

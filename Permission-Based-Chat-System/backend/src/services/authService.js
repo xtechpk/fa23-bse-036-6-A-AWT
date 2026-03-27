@@ -115,6 +115,21 @@ const buildTokens = async (user, meta = {}, existingSessionId = null) => {
   const accessToken = createAccessToken(payload);
   const refreshToken = createRefreshToken(payload);
 
+  const decodedRefresh = decodeToken(refreshToken);
+  if (!decodedRefresh || !decodedRefresh.exp) {
+    throw new ApiError(500, 'Unable to decode refresh token');
+  }
+  const refreshExpiresAt = new Date(decodedRefresh.exp * 1000);
+
+  // Ensure the login session exists before linking refresh token via sessionId FK.
+  await upsertSession({
+    sessionId,
+    userId: user.id,
+    refreshTokenId: null,
+    expiresAt: refreshExpiresAt,
+    meta,
+  });
+
   const { record: refreshTokenRecord, expiresAt } = await persistRefreshToken(
     user.id,
     refreshToken,

@@ -45,6 +45,7 @@ const protect = async (req, res, next) => {
             registrationNumber: true,
             password: true,
             role: true,
+            uiDensityMode: true,
             isActive: true,
             twoFactorEnabled: true,
             twoFactorEnabledAt: true,

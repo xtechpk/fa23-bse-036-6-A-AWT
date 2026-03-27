@@ -3,14 +3,88 @@ const prisma = require('../utils/prismaClient');
 const ApiError = require('../utils/ApiError');
 const ApiResponse = require('../utils/ApiResponse');
 const { ROLES } = require('../utils/constants');
-const { getFileAssetsByIds, setUserAvatarFromUpload } = require('../services/fileService');
+const {
+  FILE_ATTACHMENT_TYPES,
+  FILE_CATEGORIES,
+  getFileAssetsByIds,
+  setUserAvatarFromUpload,
+} = require('../services/fileService');
 const { invalidateAdminCache } = require('../services/socketService');
 const asyncHandler = require('../utils/asyncHandler');
+
+const getManagedRoleByActor = (actorRole) => {
+  if (actorRole === ROLES.SUPERADMIN) return ROLES.ADMIN;
+  if (actorRole === ROLES.ADMIN) return ROLES.USER;
+  return ROLES.ADMIN;
+};
+
+const getManagedRolesByActor = (actorRole) => {
+  if (actorRole === ROLES.SUPERADMIN) return [ROLES.SUPERADMIN, ROLES.ADMIN];
+  if (actorRole === ROLES.ADMIN) return [ROLES.USER];
+  return [];
+};
+
+const canManageTargetRole = (actorRole, targetRole) =>
+  getManagedRolesByActor(actorRole).includes(targetRole);
 
 const sanitizeUser = (user) => {
   if (!user) return null;
   const { password, ...safe } = user;
   return { ...safe, _id: safe.id };
+};
+
+const hydrateUsersWithAvatars = async (users = []) => {
+  if (!Array.isArray(users) || users.length === 0) {
+    return [];
+  }
+
+  const safeUsers = users.map((user) => sanitizeUser(user));
+  const userIds = safeUsers.map((user) => user.id);
+
+  const avatarFileIds = [
+    ...new Set(safeUsers.map((user) => user.avatarFileId).filter(Boolean).map(String)),
+  ];
+
+  const [avatarAssets, fallbackAssets] = await Promise.all([
+    avatarFileIds.length > 0 ? getFileAssetsByIds(avatarFileIds) : Promise.resolve([]),
+    prisma.fileAsset.findMany({
+      where: {
+        attachedToType: FILE_ATTACHMENT_TYPES.USER_AVATAR,
+        attachedToId: { in: userIds },
+        category: FILE_CATEGORIES.AVATAR,
+        isTemporary: false,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+
+  const avatarByFileId = new Map(avatarAssets.map((asset) => [asset.id, asset]));
+  const fallbackByUserId = new Map();
+  for (const asset of fallbackAssets) {
+    const userId = String(asset.attachedToId || '').trim();
+    if (!userId || fallbackByUserId.has(userId)) continue;
+
+    fallbackByUserId.set(userId, {
+      ...asset,
+      _id: asset.id,
+      url: asset.publicUrl,
+      path: asset.relativePath,
+      fileName: asset.originalName,
+    });
+  }
+
+  return safeUsers.map((user) => {
+    const avatarFile =
+      (user.avatarFileId ? avatarByFileId.get(String(user.avatarFileId)) : null) ||
+      fallbackByUserId.get(user.id) ||
+      null;
+
+    return {
+      ...user,
+      avatar: avatarFile?.publicUrl || null,
+      avatarFile,
+    };
+  });
 };
 
 const hydrateAssignedGroups = async (user) => {
@@ -45,7 +119,17 @@ const listUsers = asyncHandler(async (req, res) => {
   const skip = (page - 1) * limit;
 
   const where = {};
-  if (req.query.role) where.role = req.query.role;
+  const managedRoles = getManagedRolesByActor(req.user.role);
+
+  if (req.query.role) {
+    if (!managedRoles.includes(req.query.role)) {
+      throw new ApiError(403, `You can only list users in your managed scope: ${managedRoles.join(', ')}`);
+    }
+    where.role = req.query.role;
+  } else {
+    where.role = { in: managedRoles };
+  }
+
   if (typeof req.query.isActive !== 'undefined') where.isActive = req.query.isActive === 'true';
 
   const [users, total] = await Promise.all([
@@ -60,11 +144,58 @@ const listUsers = asyncHandler(async (req, res) => {
 
   const payload = {
     message: 'Users fetched successfully',
-    data: users.map(sanitizeUser),
+    data: await hydrateUsersWithAvatars(users),
     meta: { page, limit, total, pages: Math.ceil(total / limit) },
   };
 
   return ApiResponse.success(res, payload);
+});
+
+const createUser = asyncHandler(async (req, res) => {
+  if (![ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role)) {
+    throw new ApiError(403, 'Only admin or superadmin can create managed users');
+  }
+
+  const managedRoles = getManagedRolesByActor(req.user.role);
+  const requestedRole = req.body.role;
+  const managedRole = requestedRole && managedRoles.includes(requestedRole) ? requestedRole : getManagedRoleByActor(req.user.role);
+
+  if (requestedRole && !managedRoles.includes(requestedRole)) {
+    throw new ApiError(403, `You can only create users in your managed scope: ${managedRoles.join(', ')}`);
+  }
+  const normalizedEmail = req.body.email.trim().toLowerCase();
+  const normalizedRegistrationNumber = req.body.registrationNumber.trim().toUpperCase();
+
+  const existing = await prisma.user.findFirst({
+    where: {
+      OR: [{ email: normalizedEmail }, { registrationNumber: normalizedRegistrationNumber }],
+    },
+  });
+
+  if (existing) {
+    throw new ApiError(409, 'User with email or registration number already exists');
+  }
+
+  const passwordHash = await bcrypt.hash(req.body.password, 12);
+
+  const created = await prisma.user.create({
+    data: {
+      name: req.body.name.trim(),
+      registrationNumber: normalizedRegistrationNumber,
+      email: normalizedEmail,
+      password: passwordHash,
+      role: managedRole,
+      isActive: true,
+    },
+  });
+
+  invalidateAdminCache();
+
+  return ApiResponse.success(res, {
+    statusCode: 201,
+    message: `${managedRole} created successfully`,
+    data: sanitizeUser(created),
+  });
 });
 
 const getUserById = asyncHandler(async (req, res) => {
@@ -87,8 +218,20 @@ const getUserById = asyncHandler(async (req, res) => {
 
 const updateUser = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  const actorId = String(req.user._id);
 
-  if (![ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role) && String(req.user._id) !== id) {
+  if ([ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role) && actorId !== id) {
+    const target = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true } });
+    if (!target) {
+      throw new ApiError(404, 'User not found');
+    }
+
+    if (!canManageTargetRole(req.user.role, target.role)) {
+      throw new ApiError(403, 'You are not authorized to update this user');
+    }
+  }
+
+  if (![ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role) && actorId !== id) {
     throw new ApiError(403, 'You can only update your own profile');
   }
 
@@ -98,6 +241,15 @@ const updateUser = asyncHandler(async (req, res) => {
     delete payload.isActive;
     delete payload.assignedGroups;
     delete payload.password;
+  }
+
+  if ([ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role) && payload.role) {
+    const managedRoles = getManagedRolesByActor(req.user.role);
+    if (!managedRoles.includes(payload.role)) {
+      throw new ApiError(403, `You can only assign roles in your managed scope: ${managedRoles.join(', ')}`);
+    }
+  } else {
+    delete payload.role;
   }
 
   delete payload.avatar;
@@ -128,6 +280,42 @@ const updateUser = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, {
     message: 'User updated successfully',
     data: await hydrateAssignedGroups(user),
+  });
+});
+
+const deleteUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  if (![ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role)) {
+    throw new ApiError(403, 'Only admin or superadmin can delete managed users');
+  }
+
+  if (String(req.user._id) === id) {
+    throw new ApiError(400, 'You cannot delete your own account');
+  }
+
+  const target = await prisma.user.findUnique({ where: { id } });
+  if (!target) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  if (!canManageTargetRole(req.user.role, target.role)) {
+    throw new ApiError(403, 'You are not authorized to delete this user');
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: target.id },
+    data: {
+      isActive: false,
+      lastSeen: new Date(),
+    },
+  });
+
+  invalidateAdminCache();
+
+  return ApiResponse.success(res, {
+    message: 'User deleted successfully',
+    data: sanitizeUser(updated),
   });
 });
 
@@ -163,9 +351,8 @@ const searchUsers = asyncHandler(async (req, res) => {
     NOT: { id: req.user._id },
   };
 
-  if (![ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role)) {
-    where.isActive = true;
-  }
+  where.isActive = true;
+  where.role = getManagedRoleByActor(req.user.role);
 
   const users = await prisma.user.findMany({
     where,
@@ -175,7 +362,7 @@ const searchUsers = asyncHandler(async (req, res) => {
 
   return ApiResponse.success(res, {
     message: 'Search results fetched successfully',
-    data: users.map(sanitizeUser),
+    data: await hydrateUsersWithAvatars(users),
   });
 });
 
@@ -201,8 +388,10 @@ const uploadMyAvatar = asyncHandler(async (req, res) => {
 
 module.exports = {
   listUsers,
+  createUser,
   getUserById,
   updateUser,
+  deleteUser,
   updateUserStatus,
   searchUsers,
   uploadMyAvatar,

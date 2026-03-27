@@ -1,7 +1,7 @@
 const prisma = require('../utils/prismaClient');
 const ApiError = require('../utils/ApiError');
 const { invalidateResourceEverywhere } = require('../utils/cache');
-const { PERMISSION_STATUS } = require('../utils/constants');
+const { PERMISSION_STATUS, ROLES } = require('../utils/constants');
 const {
   notifyAdminsPermissionRequestCreated,
   notifyPermissionRequestUpdated,
@@ -11,6 +11,111 @@ const normalizePair = (userId1, userId2) => {
   const a = String(userId1);
   const b = String(userId2);
   return a < b ? { userA: a, userB: b } : { userA: b, userB: a };
+};
+
+const ROLE_RANK = {
+  [ROLES.USER]: 1,
+  [ROLES.ADMIN]: 2,
+  [ROLES.SUPERADMIN]: 3,
+};
+
+const canSendDirectByHierarchy = (senderRole, receiverRole) => {
+  if (senderRole === ROLES.SUPERADMIN) {
+    return true;
+  }
+
+  if (senderRole === ROLES.ADMIN && receiverRole === ROLES.SUPERADMIN) {
+    return true;
+  }
+
+  if (senderRole === ROLES.ADMIN && receiverRole === ROLES.USER) {
+    return true;
+  }
+
+  const senderRank = ROLE_RANK[senderRole] || 0;
+  const receiverRank = ROLE_RANK[receiverRole] || 0;
+  return senderRank > receiverRank;
+};
+
+const getManagedRoleByActor = (actorRole) => {
+  if (actorRole === ROLES.SUPERADMIN) return ROLES.ADMIN;
+  if (actorRole === ROLES.ADMIN) return ROLES.USER;
+  if (actorRole === ROLES.USER) return ROLES.ADMIN;
+  return null;
+};
+
+const canCreateRequestBetween = (requesterRole, targetRole) => {
+  if (requesterRole === ROLES.ADMIN) {
+    return targetRole === ROLES.USER;
+  }
+
+  if (requesterRole === ROLES.USER) {
+    return targetRole === ROLES.ADMIN;
+  }
+
+  if (requesterRole === ROLES.SUPERADMIN) {
+    return targetRole === ROLES.ADMIN || targetRole === ROLES.USER;
+  }
+
+  return false;
+};
+
+const isTargetInManagementScope = ({ actorId, actorRole, targetUser }) => {
+  if (!targetUser) return false;
+
+  // A user can always operate on their own records where relevant.
+  if (String(targetUser.id) === String(actorId)) return true;
+
+  const managedRole = getManagedRoleByActor(actorRole);
+  return managedRole !== null && targetUser.role === managedRole;
+};
+
+const buildPermissionScopeFilter = ({ actorId, actorRole }) => {
+  if (actorRole === ROLES.SUPERADMIN) {
+    return {};
+  }
+
+  const managedRole = getManagedRoleByActor(actorRole);
+
+  if (!managedRole) {
+    return {
+      OR: [{ requesterId: String(actorId) }, { targetId: String(actorId) }],
+    };
+  }
+
+  return {
+    OR: [
+      { requesterId: String(actorId) },
+      { targetId: String(actorId) },
+      { requester: { role: managedRole } },
+      { target: { role: managedRole } },
+    ],
+  };
+};
+
+const isPermissionInScope = async ({ actorId, actorRole, permission }) => {
+  if (actorRole === ROLES.SUPERADMIN) {
+    return true;
+  }
+
+  const actorIdStr = String(actorId);
+  if (permission.requesterId === actorIdStr || permission.targetId === actorIdStr) {
+    return true;
+  }
+
+  const managedRole = getManagedRoleByActor(actorRole);
+  if (!managedRole) return false;
+
+  const participants = await prisma.user.findMany({
+    where: { id: { in: [permission.requesterId, permission.targetId] } },
+    select: { id: true, role: true },
+  });
+
+  if (actorRole === ROLES.ADMIN) {
+    return participants.some((participant) => participant.role === ROLES.USER);
+  }
+
+  return participants.some((participant) => participant.role === managedRole);
 };
 
 const invalidateResources = async (resources = []) => {
@@ -38,7 +143,7 @@ const PERMISSION_CACHE_RESOURCES = [
 const getUsersForPermissionCheck = async (userId1, userId2) => {
   const users = await prisma.user.findMany({
     where: { id: { in: [userId1, userId2] } },
-    select: { id: true, isActive: true },
+    select: { id: true, isActive: true, role: true },
   });
 
   if (users.length !== 2) {
@@ -62,15 +167,17 @@ const getUsersForPermissionCheck = async (userId1, userId2) => {
 const areUsersInSameGroup = async (userId1, userId2) => {
   await getUsersForPermissionCheck(userId1, userId2);
 
-  const u1Memberships = await prisma.groupMember.findMany({
-    where: { userId: String(userId1) },
-    select: { groupId: true },
-  });
-
-  if (u1Memberships.length === 0) return false;
-
   const shared = await prisma.groupMember.findFirst({
-    where: { userId: String(userId2), groupId: { in: u1Memberships.map((m) => m.groupId) } },
+    where: {
+      userId: String(userId1),
+      group: {
+        members: {
+          some: {
+            userId: String(userId2),
+          },
+        },
+      },
+    },
   });
 
   return Boolean(shared);
@@ -94,7 +201,11 @@ const isPrivateChatAllowed = async (senderId, receiverId) => {
     throw new ApiError(400, 'You cannot message yourself');
   }
 
-  await getUsersForPermissionCheck(senderId, receiverId);
+  const { first: sender, second: receiver } = await getUsersForPermissionCheck(senderId, receiverId);
+
+  if (canSendDirectByHierarchy(sender.role, receiver.role)) {
+    return { allowed: true, reason: 'role_hierarchy_direct' };
+  }
 
   const sameGroup = await areUsersInSameGroup(senderId, receiverId);
   if (sameGroup) {
@@ -115,8 +226,14 @@ const createPermissionRequest = async ({ requesterId, targetUserId, reason, expi
   }
 
   const [requester, target] = await Promise.all([
-    prisma.user.findUnique({ where: { id: requesterId }, select: { id: true, isActive: true } }),
-    prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, isActive: true } }),
+    prisma.user.findUnique({
+      where: { id: requesterId },
+      select: { id: true, role: true, isActive: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, role: true, isActive: true },
+    }),
   ]);
 
   if (!requester || !target) {
@@ -125,6 +242,28 @@ const createPermissionRequest = async ({ requesterId, targetUserId, reason, expi
 
   if (!requester.isActive || !target.isActive) {
     throw new ApiError(403, 'Inactive users cannot request cross-group chat permission');
+  }
+
+  if (!canCreateRequestBetween(requester.role, target.role)) {
+    throw new ApiError(403, 'Permission request is not allowed for this role pair');
+  }
+
+  const directResult = await isPrivateChatAllowed(requesterId, targetUserId);
+  if (directResult.allowed) {
+    throw new ApiError(400, 'Permission request is not required for this chat pair');
+  }
+
+  if (
+    !isTargetInManagementScope({
+      actorId: requester.id,
+      actorRole: requester.role,
+      targetUser: target,
+    })
+  ) {
+    throw new ApiError(
+      403,
+      'Role hierarchy violation: allowed scopes are superadmin>admins, admin>users, user>admins'
+    );
   }
 
   const sameGroup = await areUsersInSameGroup(requesterId, targetUserId);
@@ -183,6 +322,28 @@ const approvePermissionRequest = async ({
     throw new ApiError(400, `Request already ${request.status}`);
   }
 
+  const admin = await prisma.user.findUnique({
+    where: { id: String(adminId) },
+    select: { id: true, role: true },
+  });
+
+  if (!admin || ![ROLES.ADMIN, ROLES.SUPERADMIN].includes(admin.role)) {
+    throw new ApiError(403, 'Only admin or superadmin can approve requests');
+  }
+
+  const inScope = await isPermissionInScope({
+    actorId: admin.id,
+    actorRole: admin.role,
+    permission: request,
+  });
+
+  if (!inScope) {
+    throw new ApiError(
+      403,
+      'Role hierarchy violation: allowed scopes are superadmin>admins and admin>users'
+    );
+  }
+
   const updated = await prisma.permissionRequest.update({
     where: { id: requestId },
     data: {
@@ -235,6 +396,28 @@ const rejectPermissionRequest = async ({ requestId, adminId, adminRemark = null 
     throw new ApiError(400, `Request already ${request.status}`);
   }
 
+  const admin = await prisma.user.findUnique({
+    where: { id: String(adminId) },
+    select: { id: true, role: true },
+  });
+
+  if (!admin || ![ROLES.ADMIN, ROLES.SUPERADMIN].includes(admin.role)) {
+    throw new ApiError(403, 'Only admin or superadmin can reject requests');
+  }
+
+  const inScope = await isPermissionInScope({
+    actorId: admin.id,
+    actorRole: admin.role,
+    permission: request,
+  });
+
+  if (!inScope) {
+    throw new ApiError(
+      403,
+      'Role hierarchy violation: allowed scopes are superadmin>admins and admin>users'
+    );
+  }
+
   const updated = await prisma.permissionRequest.update({
     where: { id: requestId },
     data: {
@@ -255,14 +438,23 @@ const grantDirectChatPermission = async ({ adminId, userAId, userBId, expiresAt 
     throw new ApiError(400, 'Cannot grant permission between a user and themselves');
   }
 
+  const admin = await prisma.user.findUnique({
+    where: { id: String(adminId) },
+    select: { id: true, role: true },
+  });
+
+  if (!admin || ![ROLES.ADMIN, ROLES.SUPERADMIN].includes(admin.role)) {
+    throw new ApiError(403, 'Only admin or superadmin can grant direct chat permissions');
+  }
+
   const [uA, uB] = await Promise.all([
     prisma.user.findUnique({
       where: { id: String(userAId) },
-      select: { id: true, isActive: true },
+      select: { id: true, role: true, isActive: true },
     }),
     prisma.user.findUnique({
       where: { id: String(userBId) },
-      select: { id: true, isActive: true },
+      select: { id: true, role: true, isActive: true },
     }),
   ]);
 
@@ -272,6 +464,24 @@ const grantDirectChatPermission = async ({ adminId, userAId, userBId, expiresAt 
 
   if (!uA.isActive || !uB.isActive) {
     throw new ApiError(403, 'Both users must be active to receive a chat permission');
+  }
+
+  const canManageA = isTargetInManagementScope({
+    actorId: admin.id,
+    actorRole: admin.role,
+    targetUser: uA,
+  });
+  const canManageB = isTargetInManagementScope({
+    actorId: admin.id,
+    actorRole: admin.role,
+    targetUser: uB,
+  });
+
+  if (!canManageA || !canManageB) {
+    throw new ApiError(
+      403,
+      'Role hierarchy violation: you can only grant permissions within your managed role scope'
+    );
   }
 
   const { userA, userB } = normalizePair(userAId, userBId);
@@ -306,6 +516,15 @@ const grantDirectChatPermission = async ({ adminId, userAId, userBId, expiresAt 
 };
 
 const revokeChatPermission = async ({ adminId, permissionId }) => {
+  const admin = await prisma.user.findUnique({
+    where: { id: String(adminId) },
+    select: { id: true, role: true },
+  });
+
+  if (!admin || ![ROLES.ADMIN, ROLES.SUPERADMIN].includes(admin.role)) {
+    throw new ApiError(403, 'Only admin or superadmin can revoke chat permissions');
+  }
+
   const permission = await prisma.chatPermission.findUnique({
     where: { id: String(permissionId) },
   });
@@ -318,6 +537,26 @@ const revokeChatPermission = async ({ adminId, permissionId }) => {
     throw new ApiError(400, 'This chat permission is already inactive');
   }
 
+  const participants = await prisma.user.findMany({
+    where: { id: { in: [permission.userAId, permission.userBId] } },
+    select: { id: true, role: true },
+  });
+
+  const canRevoke = participants.every((participant) =>
+    isTargetInManagementScope({
+      actorId: admin.id,
+      actorRole: admin.role,
+      targetUser: participant,
+    })
+  );
+
+  if (!canRevoke) {
+    throw new ApiError(
+      403,
+      'Role hierarchy violation: you can only revoke permissions within your managed role scope'
+    );
+  }
+
   const updated = await prisma.chatPermission.update({
     where: { id: permission.id },
     data: { isActive: false },
@@ -328,12 +567,25 @@ const revokeChatPermission = async ({ adminId, permissionId }) => {
   return updated;
 };
 
-const listChatPermissions = async ({ userId, isAdmin = false, page = 1, limit = 20 }) => {
+const listChatPermissions = async ({ userId, actorRole, page = 1, limit = 20 }) => {
   const safePage = Math.max(1, Number(page));
   const safeLimit = Math.min(100, Math.max(1, Number(limit)));
   const skip = (safePage - 1) * safeLimit;
 
-  const where = isAdmin ? {} : { OR: [{ userAId: String(userId) }, { userBId: String(userId) }] };
+  const managedRole = getManagedRoleByActor(actorRole);
+
+  let where = { OR: [{ userAId: String(userId) }, { userBId: String(userId) }] };
+
+  if ([ROLES.ADMIN, ROLES.SUPERADMIN].includes(actorRole) && managedRole) {
+    where = {
+      OR: [
+        { userAId: String(userId) },
+        { userBId: String(userId) },
+        { userA: { role: managedRole } },
+        { userB: { role: managedRole } },
+      ],
+    };
+  }
 
   const [items, total] = await Promise.all([
     prisma.chatPermission.findMany({
@@ -352,7 +604,7 @@ const listChatPermissions = async ({ userId, isAdmin = false, page = 1, limit = 
   ];
   const users = await prisma.user.findMany({
     where: { id: { in: uniqueUserIds } },
-    select: { id: true, name: true, email: true, registrationNumber: true },
+    select: { id: true, name: true, email: true, registrationNumber: true, role: true },
   });
   const userMap = new Map(users.map((u) => [u.id, { ...u, _id: u.id }]));
 
@@ -372,6 +624,8 @@ const listChatPermissions = async ({ userId, isAdmin = false, page = 1, limit = 
 
 module.exports = {
   normalizePair,
+  buildPermissionScopeFilter,
+  isPermissionInScope,
   areUsersInSameGroup,
   isPrivateChatAllowed,
   getActiveChatPermission,

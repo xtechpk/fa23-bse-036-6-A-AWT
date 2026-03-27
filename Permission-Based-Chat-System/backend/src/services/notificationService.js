@@ -123,6 +123,53 @@ const markNotificationRead = async (userId, notificationId) => {
   return mapNotification(updated);
 };
 
+const markAllNotificationsRead = async (userId) => {
+  const now = new Date();
+
+  const result = await prisma.notification.updateMany({
+    where: { recipientId: String(userId), isRead: false },
+    data: { isRead: true, readAt: now },
+  });
+
+  await invalidateNotificationCaches();
+
+  return { updatedCount: result.count };
+};
+
+const deleteNotification = async (userId, notificationId) => {
+  const notification = await prisma.notification.findFirst({
+    where: { id: String(notificationId), recipientId: String(userId) },
+    select: { id: true },
+  });
+
+  if (!notification) {
+    throw new ApiError(404, 'Notification not found');
+  }
+
+  await prisma.notification.delete({ where: { id: notification.id } });
+  await invalidateNotificationCaches();
+
+  return { id: notification.id };
+};
+
+const deleteNotificationsBulk = async (userId, notificationIds = []) => {
+  const safeIds = [...new Set(notificationIds.map((id) => String(id).trim()).filter(Boolean))];
+  if (safeIds.length === 0) {
+    return { deletedCount: 0 };
+  }
+
+  const result = await prisma.notification.deleteMany({
+    where: {
+      recipientId: String(userId),
+      id: { in: safeIds },
+    },
+  });
+
+  await invalidateNotificationCaches();
+
+  return { deletedCount: result.count };
+};
+
 const notifyAdminsPermissionRequestCreated = async (permissionRequest) => {
   const admins = await prisma.user.findMany({
     where: { role: { in: [ROLES.ADMIN, ROLES.SUPERADMIN] }, isActive: true },
@@ -189,6 +236,9 @@ module.exports = {
   createBulkNotifications,
   listNotifications,
   markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification,
+  deleteNotificationsBulk,
   notifyAdminsPermissionRequestCreated,
   notifyPermissionRequestUpdated,
 };

@@ -1,0 +1,382 @@
+import React, { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
+import DropdownItem from "./DropdownItem";
+
+const Menu: React.FC = () => {
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null); 
+  const dropdownRefs = useRef(new Map<string, HTMLDivElement>()); 
+
+  const toggleDropdown = (dropdownName: string) => {
+    setOpenDropdown((prev) => (prev === dropdownName ? null : dropdownName)); 
+  };
+
+  const handleClickOutside = (event: MouseEvent) => {
+    const clickedInside = Array.from(dropdownRefs.current.values()).some(
+      (ref) => ref && ref.contains(event.target as Node)
+    );
+
+    if (!clickedInside) {
+      setOpenDropdown(null); 
+    }
+  };
+
+  useEffect(() => {
+    document.addEventListener("mousedown", handleClickOutside); 
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
+  return (
+    <nav className="bg-white shadow-md dark:bg-gray-900">
+      <div className="max-w-screen-xl mx-auto flex items-center justify-between p-4">
+        {/* Logo */}
+        <Link to="/" className="flex items-center space-x-3">
+          <img
+            src="https://images.unsplash.com/photo-1512069772995-ec65ed45afd6?q=80&w=1937&auto=format&fit=crop"
+            className="h-14 w-14 rounded-full"
+            alt="Logo"
+          />
+          <span className="text-2xl font-bold text-gray-800 dark:text-white">
+            MEDICO
+          </span>
+        </Link>
+        <ul className="flex space-x-6 items-center text-sm font-medium text-gray-700 dark:text-gray-300">
+          {/*1 Registration Dropdown */}
+          <li className="relative">
+            <button
+              onClick={() => toggleDropdown("registration")}
+              className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition focus:outline-none"
+            >
+              Registration
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  openDropdown === "registration" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+
+            {openDropdown === "registration" && (
+              <div
+                ref={(ref) => {
+                  if (ref) dropdownRefs.current.set("registration", ref);
+                }}
+                className="absolute z-50 top-full left-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 grid grid-cols-1 gap-2 min-w-max whitespace-nowrap"
+              >
+                <DropdownItem to="/company_code" label="Company Codes" />
+                <DropdownItem to="/company_groups_codes" label="Company Groups Codes" />
+                <DropdownItem to="/fixed_discount" label="Fixed Discount" />
+                <DropdownItem to="/pro" label="Supplier Code" />
+                <DropdownItem to="/items" label="Customer Code" />
+                <DropdownItem to="/library" label="Area Codes" />
+                <DropdownItem to="/resources" label="Expenses Codes" />
+                <DropdownItem to="/pro" label="Bank Codes" />
+                <DropdownItem to="/items" label="Lone Account" />
+                <DropdownItem to="/library" label="Personal Drawing A/c" />
+                <DropdownItem to="/resources" label="Capital Account" />
+                <DropdownItem to="/pro" label="Stock Minimum Level" />
+                <DropdownItem to="/items" label="Rate Changings" />
+                <DropdownItem to="/library" label="Openings Balance" />
+                <DropdownItem to="/resources" label="Company Grouping" />
+                <DropdownItem to="/pro" label="Batch Setting" />
+                <DropdownItem to="/items" label="grouping For Claim" />
+              </div>
+            )}
+          </li>
+          {/* 2  Transactions*/}
+          <li className="relative">
+            <button
+              onClick={() => toggleDropdown("transactions")}
+              className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition focus:outline-none"
+            >
+              Transactions
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  openDropdown === "items" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+
+            {openDropdown === "transactions" && (
+              <div
+                ref={(ref) => {
+                  if (ref) dropdownRefs.current.set("transactions", ref);
+                }}
+                className="absolute z-50 top-full left-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 grid grid-cols-1 gap-2 min-w-max whitespace-nowrap"
+              >
+                <DropdownItem to="/items" label="Sales Invoices" />
+                <DropdownItem to="/buy-medicine" label="Purchase Invoices" />
+                <DropdownItem to="/resources" label="Sales Return" />
+                <DropdownItem to="/pro" label="Free Sample Vouncher" />
+                <DropdownItem to="/items" label="Customer Reciept Vouncher" />
+                <DropdownItem to="/library" label="Customer Reciept Return" />
+                <DropdownItem to="/resources" label="Supplier Payment Vouncher"/>
+                <DropdownItem to="/pro" label="Expenses Vouncher" />
+                <DropdownItem to="/library" label="Bank Transactions" />
+                <DropdownItem to="/resources" label="Lone Transactions" />
+                <DropdownItem to="/pro" label="Company Wise Orders" />
+                <DropdownItem to="/items" label="D.S.R. Forms" />
+                <DropdownItem to="/library" label="Packing Slips" />
+                <DropdownItem
+                  to="/resources"
+                  label="Multiple Reciept Vouncher"
+                />
+                <DropdownItem to="/pro" label="Offer List" />
+                <DropdownItem to="/items" label="Offer List Item In Stock" />
+              </div>
+            )}
+          </li>
+          {/* 3 Correction Dropdown  */}
+          <li className="relative">
+            <button
+              onClick={() => toggleDropdown("correction")}
+              className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition focus:outline-none"
+            >
+              Correction
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  openDropdown === "items" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+
+            {openDropdown === "correction" && (
+              <div
+                ref={(ref) => {
+                  if (ref) dropdownRefs.current.set("correction", ref);
+                }}
+                className="absolute z-50 top-full left-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 grid grid-cols-1 gap-2 min-w-max whitespace-nowrap"
+              >
+                <DropdownItem to="/items" label="Sales Invoices" />
+                <DropdownItem to="/library" label="Free Sample Incoices" />
+                <DropdownItem to="/resources" label="Purchase Invoices" />
+                <DropdownItem to="/pro" label="Sales Return" />
+                <DropdownItem to="/items" label="Purchase Returns" />
+                <DropdownItem to="/library" label="Customer Receipt" />
+                <DropdownItem to="/resources" label="Supplier Payments" />
+                <DropdownItem to="/pro" label="Depit Note (Supplier)" />
+                <DropdownItem to="/items" label="Credit Note (Supplier)" />
+                <DropdownItem to="/library" label="Credit Note (Customer)" />
+                <DropdownItem to="/resources" label="Expenses Entery" />
+                <DropdownItem to="/pro" label="Bank Transactions" />
+                <DropdownItem to="/items" label="Lone Transactions" />
+                <DropdownItem to="/library" label="Personal Drawing" />
+                <DropdownItem to="/resources" label="Capital Transactions" />
+                <DropdownItem to="/pro" label="Master Records" />
+                <DropdownItem to="/items" label="Items" />
+                <DropdownItem to="/library" label="New Items" />
+                <DropdownItem to="/resources" label="Delete Items" />
+                <DropdownItem to="/pro" label="Restore Items" />
+                <DropdownItem to="/items" label="Multi Reciepts Records" />
+                <DropdownItem to="/library" label="Multi Reciepts Vouncher" />
+                <DropdownItem to="/resources" label="UMY Bill" />
+              </div>
+            )}
+          </li>
+
+          {/* 4 Reports Dropdown */}
+          <li className="relative">
+            <button
+              onClick={() => toggleDropdown("report")}
+              className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition focus:outline-none"
+            >
+              Reports
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  openDropdown === "reports" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+
+            {openDropdown === "report" && (
+              <div
+                ref={(ref) => {
+                  if (ref) dropdownRefs.current.set("report", ref);
+                }}
+                className="absolute z-50 top-full left-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 grid grid-cols-1 gap-2 min-w-max whitespace-nowrap"
+              >
+                <DropdownItem to="/items" label="Purchase Invoice" />
+                <DropdownItem to="/library" label="Sales Invoices" />
+                <DropdownItem to="/resources" label="Payable Reports" />
+                <DropdownItem to="/pro" label="Receivable/Lone" />
+                <DropdownItem to="/items" label="Payments & Expenses" />
+                <DropdownItem to="/library" label="Receipts Reports" />
+                <DropdownItem to="/resources" label="Credit & Debit Note" />
+                <DropdownItem to="/pro" label="Stock Reports" />
+                <DropdownItem to="/items" label="Sales Reports" />
+                <DropdownItem to="/library" label="Purchase Reports" />
+                <DropdownItem to="/resources" label="Sales Returns Reports" />
+                <DropdownItem to="/pro" label="IBAN & Cheque in hand" />
+                <DropdownItem to="/items" label="RO Namcha (Cash Datails)" />
+                <DropdownItem to="/library" label="Profit Reports" />
+                <DropdownItem to="/resources" label="Capital Reports" />
+                <DropdownItem to="/pro" label="Status" />
+              </div>
+            )}
+          </li>
+
+          {/* 5 Printings Dropdown*/}
+          <li className="relative">
+            <button
+              onClick={() => toggleDropdown("printing")}
+              className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition focus:outline-none"
+            >
+              Printing
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  openDropdown === "printing" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+
+            {openDropdown === "printing" && (
+              <div
+                ref={(ref) => {
+                  if (ref) dropdownRefs.current.set("printing", ref);
+                }}
+                className="absolute z-50 top-full left-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 grid grid-cols-1 gap-2 min-w-max whitespace-nowrap"
+              >
+                <DropdownItem to="/items" label="Print Labels" />
+                <DropdownItem to="/library" label="Print Receipt" />
+              </div>
+            )}
+          </li>
+
+          {/* 6 Pricing Dropdown*/}
+          <li className="relative">
+            <button
+              onClick={() => toggleDropdown("price")}
+              className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition focus:outline-none"
+            >
+              Price
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  openDropdown === "items" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+
+            {openDropdown === "price" && (
+              <div
+                ref={(ref) => {
+                  if (ref) dropdownRefs.current.set("price", ref);
+                }}
+                className="absolute z-50 top-full left-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 grid grid-cols-1 gap-2 min-w-max whitespace-nowrap"
+              >
+                <DropdownItem to="/items" label="Sale Price" />
+                <DropdownItem to="/library" label="Retail Price" />
+              </div>
+            )}
+          </li>
+          {/*7 others */}
+          <li className="relative">
+            <button
+              onClick={() => toggleDropdown("other")}
+              className="flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition focus:outline-none"
+            >
+              Others
+              <svg
+                className={`w-4 h-4 transform transition-transform ${
+                  openDropdown === "other" ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
+            </button>
+
+            {openDropdown === "other" && (
+              <div
+                ref={(ref) => {
+                  if (ref) dropdownRefs.current.set("other", ref);
+                }}
+                className="absolute z-50 top-full left-0 mt-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl p-4 grid grid-cols-1 gap-2 min-w-max whitespace-nowrap"
+              >
+                <DropdownItem to="/items" label="Others" />
+              </div>
+            )}
+          </li>
+        </ul>
+
+        {/* Auth Buttons */}
+        <div className="space-x-3">
+          <Link
+            to="/login"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+          >
+            Log Out
+          </Link>
+        </div>
+      </div>
+    </nav>
+  );
+};
+
+export default Menu;

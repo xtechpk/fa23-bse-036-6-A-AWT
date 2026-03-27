@@ -9,6 +9,8 @@ const {
   grantDirectChatPermission,
   revokeChatPermission,
   listChatPermissions,
+  buildPermissionScopeFilter,
+  isPermissionInScope,
 } = require('../services/permissionService');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -26,7 +28,7 @@ const hydratePermissions = async (items) => {
 
   const users = await prisma.user.findMany({
     where: { id: { in: uniq(userIds) } },
-    select: { id: true, name: true, email: true, registrationNumber: true },
+    select: { id: true, name: true, email: true, registrationNumber: true, role: true },
   });
 
   const userMap = new Map(users.map((user) => [user.id, { ...user, _id: user.id }]));
@@ -60,14 +62,13 @@ const listPermissions = asyncHandler(async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
   const skip = (page - 1) * limit;
 
-  const where = {};
+  const where = buildPermissionScopeFilter({
+    actorId: req.user._id,
+    actorRole: req.user.role,
+  });
 
   if (req.query.status) {
     where.status = req.query.status;
-  }
-
-  if (![ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role)) {
-    where.OR = [{ requesterId: req.user._id }, { targetId: req.user._id }];
   }
 
   const [items, total] = await Promise.all([
@@ -99,11 +100,11 @@ const getPermissionById = asyncHandler(async (req, res) => {
     throw new ApiError(404, 'Permission request not found');
   }
 
-  const userId = String(req.user._id);
-  const canAccess =
-    [ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role) ||
-    userId === item.requesterId ||
-    userId === item.targetId;
+  const canAccess = await isPermissionInScope({
+    actorId: req.user._id,
+    actorRole: req.user.role,
+    permission: item,
+  });
 
   if (!canAccess) {
     throw new ApiError(403, 'You are not authorized to view this permission request');
@@ -172,10 +173,9 @@ const revokePermission = asyncHandler(async (req, res) => {
 });
 
 const getChatPermissions = asyncHandler(async (req, res) => {
-  const isAdmin = [ROLES.ADMIN, ROLES.SUPERADMIN].includes(req.user.role);
   const result = await listChatPermissions({
     userId: req.user._id,
-    isAdmin,
+    actorRole: req.user.role,
     page: req.query.page,
     limit: req.query.limit,
   });

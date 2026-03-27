@@ -20,6 +20,7 @@ const router = express.Router();
 router.use(protect);
 router.use(
   invalidateOnWrite([
+    'messages-inbox',
     'messages-private-history',
     'messages-group-history',
     'messages-search',
@@ -31,6 +32,11 @@ router.use(
 router.post('/upload', uploadChatAttachments, messageController.uploadAttachments);
 router.post('/private', privateMessageValidator, validate, messageController.sendPrivateMessage);
 router.post('/group', groupMessageValidator, validate, messageController.sendGroupMessage);
+router.get(
+  '/inbox',
+  cacheGet({ resource: 'messages-inbox', scope: 'user', ttlSeconds: 30 }),
+  messageController.getInboxConversations
+);
 router.get(
   '/search',
   searchMessageValidator,

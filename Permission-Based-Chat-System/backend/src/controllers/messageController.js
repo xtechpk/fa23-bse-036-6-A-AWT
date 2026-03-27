@@ -86,6 +86,17 @@ const getGroupHistory = asyncHandler(async (req, res) => {
   });
 });
 
+const getInboxConversations = asyncHandler(async (req, res) => {
+  const items = await messageService.getInboxConversations({
+    userId: req.user._id,
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Inbox conversations fetched successfully',
+    data: items,
+  });
+});
+
 const searchMessages = asyncHandler(async (req, res) => {
   const result = await messageService.searchMessages({
     userId: req.user._id,
@@ -163,6 +174,7 @@ const deleteMessage = asyncHandler(async (req, res) => {
 module.exports = {
   sendPrivateMessage,
   sendGroupMessage,
+  getInboxConversations,
   getPrivateHistory,
   getGroupHistory,
   searchMessages,

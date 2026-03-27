@@ -57,6 +57,11 @@ enum TwoFactorPurpose {
   enable
 }
 
+enum UiDensityMode {
+  comfortable
+  compact
+}
+
 // ─────────────────────────────  Models  ─────────────────────────────────────
 
 model User {
@@ -66,6 +71,7 @@ model User {
   email              String    @unique
   password           String
   role               Role      @default(user)
+  uiDensityMode      UiDensityMode @default(comfortable)
   isActive           Boolean   @default(true)
   twoFactorEnabled   Boolean   @default(false)
   twoFactorEnabledAt DateTime?
