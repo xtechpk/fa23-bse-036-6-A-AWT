@@ -26,7 +26,11 @@ import {
   NotificationItem,
   PermissionRequest,
   RegisterPayload,
+  RecoveryCodeStatus,
+  RecoveryCodesRegenerateResult,
   SOCKET_EVENTS,
+  TwoFactorEnableVerifyResult,
+  TwoFactorChallengePayload,
   UploadedAttachment,
   normalizeId,
 } from '../types/chat';
@@ -50,6 +54,14 @@ const toAbsoluteAssetUrl = (value?: string | null): string | null => {
   const apiOrigin = baseApiUrl.replace(/\/api\/?$/, '');
   const normalizedPath = raw.startsWith('/') ? raw : `/${raw}`;
   return `${apiOrigin}${normalizedPath}`;
+};
+
+const withAvatarCacheBuster = (value?: string | null): string | null => {
+  const absolute = toAbsoluteAssetUrl(value);
+  if (!absolute) return null;
+
+  const separator = absolute.includes('?') ? '&' : '?';
+  return `${absolute}${separator}v=${Date.now()}`;
 };
 
 const normalizeMessage = (msg: ChatMessage): ChatMessage => ({
@@ -93,6 +105,7 @@ const normalizeMessage = (msg: ChatMessage): ChatMessage => ({
     ? {
         ...msg.group,
         id: normalizeId(msg.group.id || msg.group._id),
+        avatar: toAbsoluteAssetUrl(msg.group.avatar || null),
       }
     : null,
 });
@@ -161,6 +174,7 @@ const normalizeInboxConversation = (item: InboxConversation): InboxConversation 
     ? {
         ...item.group,
         id: normalizeId(item.group.id || item.group._id),
+        avatar: toAbsoluteAssetUrl(item.group.avatar || null),
       }
     : undefined,
 });
@@ -179,6 +193,24 @@ const normalizeUser = (
       (user as ChatUser & { avatarFile?: { publicUrl?: string | null } }).avatarFile?.publicUrl ??
       null
   ),
+});
+
+const normalizeGroup = (group: ChatGroup): ChatGroup => ({
+  ...group,
+  id: normalizeId(group.id || group._id),
+  createdById: group.createdById ? normalizeId(group.createdById) : undefined,
+  createdBy: group.createdBy
+    ? {
+        ...group.createdBy,
+        id: normalizeId(group.createdBy.id || group.createdBy._id),
+      }
+    : null,
+  members: Array.isArray(group.members)
+    ? group.members.map((member) => ({
+        ...member,
+        id: normalizeId(member.id || member._id),
+      }))
+    : [],
 });
 
 export const useChatApp = () => {
@@ -218,6 +250,9 @@ export const useChatApp = () => {
 
   const [isAuthModeLogin, setIsAuthModeLogin] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
+  const [pendingTwoFactorLogin, setPendingTwoFactorLogin] =
+    useState<TwoFactorChallengePayload | null>(null);
+  const [pendingTwoFactorDebugCode, setPendingTwoFactorDebugCode] = useState<string | null>(null);
   const [chatBusy, setChatBusy] = useState(false);
   const [error, setError] = useState('');
   const [loginEmail, setLoginEmail] = useState('');
@@ -276,10 +311,7 @@ export const useChatApp = () => {
 
   const loadGroups = useCallback(async () => {
     const res = await axiosInstance.get<BackendResponse<ChatGroup[]>>('/groups/my');
-    const normalizedGroups = res.data.data.map((group) => ({
-      ...group,
-      id: normalizeId(group.id || group._id),
-    }));
+    const normalizedGroups = res.data.data.map((group) => normalizeGroup(group));
     setGroups(normalizedGroups);
   }, []);
 
@@ -404,6 +436,252 @@ export const useChatApp = () => {
     setUsers(normalizedUsers.filter((item) => item.id !== currentUser.id));
   }, [currentUser]);
 
+  const createGroup = useCallback(
+    async (payload: { name: string; description?: string; memberIds?: string[] }) => {
+      const safeName = payload.name.trim();
+      const safeDescription = (payload.description || '').trim();
+      const memberIds = [...new Set((payload.memberIds || []).map((id) => normalizeId(id)).filter(Boolean))];
+
+      if (!safeName) {
+        throw new Error('Group name is required.');
+      }
+
+      const createdRes = await axiosInstance.post<BackendResponse<ChatGroup>>('/groups', {
+        name: safeName,
+        description: safeDescription,
+      });
+
+      const createdGroup = createdRes.data.data;
+      const createdGroupId = normalizeId(createdGroup.id || createdGroup._id);
+
+      if (createdGroupId && memberIds.length > 0) {
+        await axiosInstance.post(`/groups/${createdGroupId}/add-members`, {
+          members: memberIds,
+        });
+      }
+
+      await Promise.all([loadGroups(), loadInboxConversations()]);
+
+      return {
+        ...normalizeGroup(createdGroup),
+        id: createdGroupId,
+        _id: createdGroupId,
+      };
+    },
+    [loadGroups, loadInboxConversations]
+  );
+
+  const updateGroup = useCallback(
+    async (groupId: string, payload: { name?: string; description?: string }) => {
+      const safeGroupId = normalizeId(groupId);
+      if (!safeGroupId) {
+        throw new Error('Invalid group id.');
+      }
+
+      const res = await axiosInstance.put<BackendResponse<ChatGroup>>(`/groups/${safeGroupId}`, {
+        ...(typeof payload.name === 'string' ? { name: payload.name.trim() } : {}),
+        ...(typeof payload.description === 'string'
+          ? { description: payload.description.trim() }
+          : {}),
+      });
+
+      const updated = normalizeGroup(res.data.data);
+      await loadGroups();
+      return updated;
+    },
+    [loadGroups]
+  );
+
+  const addGroupMembers = useCallback(
+    async (groupId: string, memberIds: string[]) => {
+      const safeGroupId = normalizeId(groupId);
+      const safeMembers = [...new Set(memberIds.map((id) => normalizeId(id)).filter(Boolean))];
+      if (!safeGroupId || safeMembers.length === 0) {
+        return null;
+      }
+
+      const res = await axiosInstance.post<BackendResponse<ChatGroup>>(
+        `/groups/${safeGroupId}/add-members`,
+        {
+          members: safeMembers,
+        }
+      );
+
+      const updated = normalizeGroup(res.data.data);
+      await loadGroups();
+      return updated;
+    },
+    [loadGroups]
+  );
+
+  const removeGroupMembers = useCallback(
+    async (groupId: string, memberIds: string[]) => {
+      const safeGroupId = normalizeId(groupId);
+      const safeMembers = [...new Set(memberIds.map((id) => normalizeId(id)).filter(Boolean))];
+      if (!safeGroupId || safeMembers.length === 0) {
+        return null;
+      }
+
+      const res = await axiosInstance.post<BackendResponse<ChatGroup>>(
+        `/groups/${safeGroupId}/remove-members`,
+        {
+          members: safeMembers,
+        }
+      );
+
+      const updated = normalizeGroup(res.data.data);
+      await loadGroups();
+      return updated;
+    },
+    [loadGroups]
+  );
+
+  const transferGroupOwnership = useCallback(
+    async (groupId: string, newOwnerId: string) => {
+      const safeGroupId = normalizeId(groupId);
+      const safeOwnerId = normalizeId(newOwnerId);
+      if (!safeGroupId || !safeOwnerId) {
+        throw new Error('Invalid transfer details.');
+      }
+
+      const res = await axiosInstance.patch<BackendResponse<ChatGroup>>(
+        `/groups/${safeGroupId}/transfer-ownership`,
+        {
+          newOwnerId: safeOwnerId,
+        }
+      );
+
+      const updated = normalizeGroup(res.data.data);
+      await loadGroups();
+      return updated;
+    },
+    [loadGroups]
+  );
+
+  const leaveGroup = useCallback(
+    async (groupId: string) => {
+      const safeGroupId = normalizeId(groupId);
+      if (!safeGroupId) {
+        throw new Error('Invalid group id.');
+      }
+
+      await axiosInstance.post(`/groups/${safeGroupId}/leave`);
+
+      if (activeTarget?.kind === 'group' && activeTarget.id === safeGroupId) {
+        setActiveTarget(null);
+        setMessages([]);
+        setReplyToMessage(null);
+        setEditingMessageId(null);
+        setTypingFromUser(null);
+      }
+
+      await Promise.all([loadGroups(), loadInboxConversations()]);
+    },
+    [activeTarget, loadGroups, loadInboxConversations]
+  );
+
+  const deleteGroup = useCallback(
+    async (groupId: string) => {
+      const safeGroupId = normalizeId(groupId);
+      if (!safeGroupId) {
+        throw new Error('Invalid group id.');
+      }
+
+      await axiosInstance.delete(`/groups/${safeGroupId}`);
+
+      if (activeTarget?.kind === 'group' && activeTarget.id === safeGroupId) {
+        setActiveTarget(null);
+        setMessages([]);
+        setReplyToMessage(null);
+        setEditingMessageId(null);
+        setTypingFromUser(null);
+      }
+
+      await Promise.all([loadGroups(), loadInboxConversations()]);
+    },
+    [activeTarget, loadGroups, loadInboxConversations]
+  );
+
+  const promoteGroupAdmin = useCallback(
+    async (groupId: string, userId: string) => {
+      const safeGroupId = normalizeId(groupId);
+      const safeUserId = normalizeId(userId);
+      if (!safeGroupId || !safeUserId) {
+        throw new Error('Invalid promotion details.');
+      }
+
+      const res = await axiosInstance.patch<BackendResponse<ChatGroup>>(
+        `/groups/${safeGroupId}/admins/promote`,
+        {
+          userId: safeUserId,
+        }
+      );
+
+      const updated = normalizeGroup(res.data.data);
+      await loadGroups();
+      return updated;
+    },
+    [loadGroups]
+  );
+
+  const demoteGroupAdmin = useCallback(
+    async (groupId: string, userId: string) => {
+      const safeGroupId = normalizeId(groupId);
+      const safeUserId = normalizeId(userId);
+      if (!safeGroupId || !safeUserId) {
+        throw new Error('Invalid demotion details.');
+      }
+
+      const res = await axiosInstance.patch<BackendResponse<ChatGroup>>(
+        `/groups/${safeGroupId}/admins/demote`,
+        {
+          userId: safeUserId,
+        }
+      );
+
+      const updated = normalizeGroup(res.data.data);
+      await loadGroups();
+      return updated;
+    },
+    [loadGroups]
+  );
+
+  const uploadGroupAvatar = useCallback(
+    async (groupId: string, file: File) => {
+      const safeGroupId = normalizeId(groupId);
+      if (!safeGroupId) {
+        throw new Error('Invalid group id.');
+      }
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await axiosInstance.post<BackendResponse<ChatGroup>>(
+        `/groups/${safeGroupId}/avatar`,
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
+
+      const updated = normalizeGroup(res.data.data);
+      await Promise.all([loadGroups(), loadInboxConversations()]);
+
+      if (activeTarget?.kind === 'group' && activeTarget.id === safeGroupId) {
+        setActiveTarget({
+          ...activeTarget,
+          name: updated.name,
+          avatar: updated.avatar || null,
+        });
+      }
+
+      return updated;
+    },
+    [activeTarget, loadGroups, loadInboxConversations]
+  );
+
   const searchUsers = useCallback(async () => {
     const query = userSearch.trim();
     if (!query) {
@@ -516,7 +794,14 @@ export const useChatApp = () => {
           avatar: target.avatar || inboxAvatar || userAvatar || messageAvatar || null,
         });
       } else {
-        setActiveTarget(target);
+        const inboxGroupAvatar = inboxConversations.find(
+          (item) => item.type === 'group' && item.threadId === target.id
+        )?.group?.avatar;
+
+        setActiveTarget({
+          ...target,
+          avatar: target.avatar || inboxGroupAvatar || null,
+        });
       }
 
       setTypingFromUser(null);
@@ -705,6 +990,41 @@ export const useChatApp = () => {
     [loadInboxConversations]
   );
 
+  const deleteConversation = useCallback(
+    async (target: ChatTarget) => {
+      try {
+        const endpoint =
+          target.kind === 'private'
+            ? `/messages/private/${target.id}`
+            : `/messages/group/${target.id}`;
+        const res = await axiosInstance.delete<
+          BackendResponse<{
+            deletedFor: 'me';
+            conversationType: 'private' | 'group';
+            conversationId: string;
+            deletedMessagesCount: number;
+          }>
+        >(endpoint);
+
+        if (activeTarget?.id === target.id && activeTarget.kind === target.kind) {
+          setActiveTarget(null);
+          setMessages([]);
+          setReplyToMessage(null);
+          setEditingMessageId(null);
+          setTypingFromUser(null);
+        }
+
+        await loadInboxConversations();
+        return res.data.data;
+      } catch (requestError) {
+        console.error(requestError);
+        setError('Could not delete this conversation.');
+        throw requestError;
+      }
+    },
+    [activeTarget, loadInboxConversations]
+  );
+
   const searchMessages = useCallback(async () => {
     const query = messageSearchTerm.trim();
     if (!query) {
@@ -727,6 +1047,22 @@ export const useChatApp = () => {
     }
   }, [messageSearchTerm]);
 
+  useEffect(() => {
+    const query = messageSearchTerm.trim();
+    if (!query) {
+      setMessageSearchResults([]);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void searchMessages();
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [messageSearchTerm, searchMessages]);
+
   const openSearchResult = useCallback(
     async (message: ChatMessage) => {
       if (!currentUser) {
@@ -735,7 +1071,12 @@ export const useChatApp = () => {
 
       if (message.messageType === 'group' && message.groupId) {
         const groupName = message.group?.name || 'Group';
-        await loadConversation({ kind: 'group', id: message.groupId, name: groupName });
+        await loadConversation({
+          kind: 'group',
+          id: message.groupId,
+          name: groupName,
+          avatar: message.group?.avatar || null,
+        });
         return;
       }
 
@@ -955,11 +1296,13 @@ export const useChatApp = () => {
 
       const res = await axiosInstance.put<BackendResponse<ChatUser>>(`/users/${currentUser.id}`, payload);
       const updated = res.data.data;
+      const normalizedUpdated = normalizeUser(updated);
       setCurrentUser((prev) =>
         prev
           ? {
               ...prev,
-              ...normalizeUser(updated),
+              ...normalizedUpdated,
+              avatar: normalizedUpdated.avatar || prev.avatar || null,
             }
           : prev
       );
@@ -987,16 +1330,89 @@ export const useChatApp = () => {
 
     const updated = res.data.data.user;
     const avatarPublicUrl = res.data.data.avatarFile?.publicUrl || null;
+
+    // Re-fetch /auth/me so frontend always receives the same canonical shape used during boot.
+    let refreshedUser: ChatUser | null = null;
+    try {
+      const meRes = await axiosInstance.get<BackendResponse<ChatUser>>('/auth/me');
+      refreshedUser = meRes.data.data;
+    } catch {
+      refreshedUser = null;
+    }
+
+    const sourceUser = refreshedUser || updated;
+    const normalized = normalizeUser(sourceUser, { avatarPublicUrl });
+    const syncedAvatar = withAvatarCacheBuster(normalized.avatar || avatarPublicUrl);
+    const normalizedWithSyncedAvatar: ChatUser = {
+      ...normalized,
+      avatar: syncedAvatar,
+    };
+
     setCurrentUser((prev) =>
       prev
         ? {
             ...prev,
-            ...normalizeUser(updated, { avatarPublicUrl }),
+            ...normalizedWithSyncedAvatar,
           }
         : prev
     );
 
-    return updated;
+    // Keep all already-loaded UI collections in sync so avatar changes are visible immediately.
+    setUsers((prev) =>
+      prev.map((user) => (user.id === currentUser.id ? { ...user, avatar: syncedAvatar } : user))
+    );
+
+    setMessages((prev) =>
+      prev.map((message) => ({
+        ...message,
+        sender:
+          message.sender && message.sender.id === currentUser.id
+            ? { ...message.sender, avatar: syncedAvatar }
+            : message.sender,
+        receiver:
+          message.receiver && message.receiver.id === currentUser.id
+            ? { ...message.receiver, avatar: syncedAvatar }
+            : message.receiver,
+      }))
+    );
+
+    setInboxConversations((prev) =>
+      prev.map((item) =>
+        item.type === 'private' && item.peer?.id === currentUser.id
+          ? {
+              ...item,
+              peer: item.peer ? { ...item.peer, avatar: syncedAvatar } : item.peer,
+            }
+          : item
+      )
+    );
+
+    setGroups((prev) =>
+      prev.map((group) => ({
+        ...group,
+        members: Array.isArray(group.members)
+          ? group.members.map((member) =>
+              member.id === currentUser.id ? { ...member, avatar: syncedAvatar } : member
+            )
+          : group.members,
+      }))
+    );
+
+    setActiveTarget((prev) => {
+      if (!prev || prev.kind !== 'private' || prev.id !== currentUser.id) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        avatar: syncedAvatar,
+      };
+    });
+
+    return {
+      ...updated,
+      avatar: syncedAvatar,
+    };
   }, [currentUser]);
 
   const handleLogin = useCallback(
@@ -1014,7 +1430,14 @@ export const useChatApp = () => {
         const loginResult = loginRes.data.data;
 
         if (loginResult.requiresTwoFactor) {
-          setError('Two-factor login is enabled on your account. Complete 2FA first.');
+          if (!loginResult.twoFactor?.challengeId) {
+            setError('Two-factor login challenge missing. Please retry sign in.');
+            return;
+          }
+
+          setPendingTwoFactorLogin(loginResult.twoFactor);
+          setPendingTwoFactorDebugCode(loginResult.debugCode || null);
+          setError('Enter your 6-digit two-factor code to complete sign in.');
           return;
         }
 
@@ -1027,6 +1450,8 @@ export const useChatApp = () => {
         const signedInUser = {
           ...normalizeUser(loginResult.user),
         };
+        setPendingTwoFactorLogin(null);
+        setPendingTwoFactorDebugCode(null);
         setCurrentUser(signedInUser);
         connectSocket(loginResult.tokens.accessToken);
       } catch (requestError) {
@@ -1038,6 +1463,42 @@ export const useChatApp = () => {
     },
     [connectSocket, loginEmail, loginPassword]
   );
+
+  const verifyLoginTwoFactor = useCallback(
+    async (code: string) => {
+      if (!pendingTwoFactorLogin?.challengeId) {
+        throw new Error('No two-factor login challenge is active.');
+      }
+
+      const res = await axiosInstance.post<BackendResponse<LoginResult>>('/auth/2fa/login/verify', {
+        challengeId: pendingTwoFactorLogin.challengeId,
+        code: code.trim(),
+      });
+
+      const loginResult = res.data.data;
+      if (!loginResult.tokens || !loginResult.user) {
+        throw new Error('Unexpected two-factor verification response from server.');
+      }
+
+      storeSessionTokens(loginResult.tokens.accessToken, loginResult.tokens.refreshToken);
+      setPendingTwoFactorLogin(null);
+      setPendingTwoFactorDebugCode(null);
+
+      const signedInUser = {
+        ...normalizeUser(loginResult.user),
+      };
+      setCurrentUser(signedInUser);
+      connectSocket(loginResult.tokens.accessToken);
+      setError('');
+    },
+    [connectSocket, pendingTwoFactorLogin]
+  );
+
+  const cancelTwoFactorLogin = useCallback(() => {
+    setPendingTwoFactorLogin(null);
+    setPendingTwoFactorDebugCode(null);
+    setError('');
+  }, []);
 
   const handleRegister = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
@@ -1074,6 +1535,8 @@ export const useChatApp = () => {
     socket?.disconnect();
     setSocket(null);
     setCurrentUser(null);
+    setPendingTwoFactorLogin(null);
+    setPendingTwoFactorDebugCode(null);
     setMessages([]);
     setGroups([]);
     setUsers([]);
@@ -1081,6 +1544,81 @@ export const useChatApp = () => {
     setNotifications([]);
     setActiveTarget(null);
   }, [socket]);
+
+  const startEnableTwoFactor = useCallback(async () => {
+    const res = await axiosInstance.post<
+      BackendResponse<TwoFactorChallengePayload & { debugCode?: string }>
+    >('/auth/2fa/enable', {});
+
+    return {
+      challenge: res.data.data,
+      debugCode: res.data.data.debugCode || null,
+    };
+  }, []);
+
+  const verifyEnableTwoFactor = useCallback(async (challengeId: string, code: string) => {
+    const res = await axiosInstance.post<BackendResponse<TwoFactorEnableVerifyResult>>(
+      '/auth/2fa/enable/verify',
+      {
+      challengeId,
+      code: code.trim(),
+      }
+    );
+
+    const updated = normalizeUser(res.data.data.user);
+    setCurrentUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...updated,
+          }
+        : prev
+    );
+
+    return {
+      user: updated,
+      recoveryCodes: Array.isArray(res.data.data.recoveryCodes) ? res.data.data.recoveryCodes : [],
+    };
+  }, []);
+
+  const disableTwoFactor = useCallback(async (code: string) => {
+    const res = await axiosInstance.post<BackendResponse<ChatUser>>('/auth/2fa/disable', {
+      code,
+    });
+
+    const updated = normalizeUser(res.data.data);
+    setCurrentUser((prev) =>
+      prev
+        ? {
+            ...prev,
+            ...updated,
+          }
+        : prev
+    );
+
+    return updated;
+  }, []);
+
+  const getRecoveryCodeStatus = useCallback(async () => {
+    const res = await axiosInstance.get<BackendResponse<RecoveryCodeStatus>>(
+      '/auth/2fa/recovery-codes/status'
+    );
+    return res.data.data;
+  }, []);
+
+  const regenerateRecoveryCodes = useCallback(async (currentPassword: string) => {
+    const res = await axiosInstance.post<BackendResponse<RecoveryCodesRegenerateResult>>(
+      '/auth/2fa/recovery-codes/regenerate',
+      {
+        currentPassword,
+      }
+    );
+
+    return {
+      recoveryCodes: Array.isArray(res.data.data.recoveryCodes) ? res.data.data.recoveryCodes : [],
+      status: res.data.data.status,
+    };
+  }, []);
 
   useEffect(() => {
     void bootstrapSession();
@@ -1279,6 +1817,8 @@ export const useChatApp = () => {
     isAdminView,
     isAuthModeLogin,
     authBusy,
+    pendingTwoFactorLogin,
+    pendingTwoFactorDebugCode,
     chatBusy,
     uploadBusy,
     error,
@@ -1333,11 +1873,28 @@ export const useChatApp = () => {
     setAdminExpiresAt,
 
     handleLogin,
+    verifyLoginTwoFactor,
+    cancelTwoFactorLogin,
     handleRegister,
     handleLogout,
+    startEnableTwoFactor,
+    verifyEnableTwoFactor,
+    disableTwoFactor,
+    getRecoveryCodeStatus,
+    regenerateRecoveryCodes,
 
     searchUsers,
     loadManagedUsers,
+    createGroup,
+    updateGroup,
+    addGroupMembers,
+    removeGroupMembers,
+    transferGroupOwnership,
+    leaveGroup,
+    deleteGroup,
+    promoteGroupAdmin,
+    demoteGroupAdmin,
+    uploadGroupAvatar,
     loadInboxConversations,
     createManagedUser,
     updateManagedUser,
@@ -1349,6 +1906,7 @@ export const useChatApp = () => {
     startEdit,
     cancelEdit,
     deleteChatMessage,
+    deleteConversation,
     searchMessages,
     openSearchResult,
 

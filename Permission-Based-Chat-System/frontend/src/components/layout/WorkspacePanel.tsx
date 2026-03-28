@@ -1,17 +1,39 @@
 import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Popconfirm, Space, Tag, notification } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ChatMessage, ChatPermission, ChatUser, NotificationItem, PermissionRequest } from '../../types/chat';
+import {
+  ChatGroup,
+  ChatMessage,
+  ChatPermission,
+  ChatUser,
+  NotificationItem,
+  PermissionRequest,
+} from '../../types/chat';
 import AppDataTable from '../ui/AppDataTable';
 import AppInput from '../ui/AppInput';
 import AppSelect from '../ui/AppSelect';
 
 interface WorkspacePanelProps {
-  activeScreen: 'conversations' | 'directory' | 'search' | 'permissions' | 'notifications';
+  activeScreen: 'conversations' | 'groups' | 'directory' | 'search' | 'permissions' | 'notifications';
   currentUser: ChatUser;
   users: ChatUser[];
+  groups: ChatGroup[];
   loadManagedUsers: (roleFilter?: ChatUser['role']) => Promise<void>;
   searchUsers: () => Promise<void>;
+  createGroup: (payload: {
+    name: string;
+    description?: string;
+    memberIds?: string[];
+  }) => Promise<ChatGroup>;
+  updateGroup: (groupId: string, payload: { name?: string; description?: string }) => Promise<ChatGroup>;
+  addGroupMembers: (groupId: string, memberIds: string[]) => Promise<ChatGroup | null>;
+  removeGroupMembers: (groupId: string, memberIds: string[]) => Promise<ChatGroup | null>;
+  transferGroupOwnership: (groupId: string, newOwnerId: string) => Promise<ChatGroup>;
+  leaveGroup: (groupId: string) => Promise<void>;
+  deleteGroup: (groupId: string) => Promise<void>;
+  promoteGroupAdmin: (groupId: string, userId: string) => Promise<ChatGroup>;
+  demoteGroupAdmin: (groupId: string, userId: string) => Promise<ChatGroup>;
+  uploadGroupAvatar: (groupId: string, file: File) => Promise<ChatGroup>;
   createManagedUser: (payload: {
     name: string;
     registrationNumber: string;
@@ -78,8 +100,19 @@ const WorkspacePanel = ({
   activeScreen,
   currentUser,
   users,
+  groups,
   loadManagedUsers,
   searchUsers,
+  createGroup,
+  updateGroup,
+  addGroupMembers,
+  removeGroupMembers,
+  transferGroupOwnership,
+  leaveGroup,
+  deleteGroup,
+  promoteGroupAdmin,
+  demoteGroupAdmin,
+  uploadGroupAvatar,
   createManagedUser,
   updateManagedUser,
   deleteManagedUser,
@@ -128,6 +161,16 @@ const WorkspacePanel = ({
   });
   const [directoryBusy, setDirectoryBusy] = useState(false);
   const [selectedNotificationIds, setSelectedNotificationIds] = useState<string[]>([]);
+  const [groupForm, setGroupForm] = useState({ name: '', description: '' });
+  const [selectedGroupMemberIds, setSelectedGroupMemberIds] = useState<string[]>([]);
+  const [groupCreateAvatarFile, setGroupCreateAvatarFile] = useState<File | null>(null);
+  const [groupBusy, setGroupBusy] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+  const [groupEditForm, setGroupEditForm] = useState({ name: '', description: '' });
+  const [groupMemberAddIds, setGroupMemberAddIds] = useState<string[]>([]);
+  const [groupMemberRemoveIds, setGroupMemberRemoveIds] = useState<string[]>([]);
+  const [newOwnerId, setNewOwnerId] = useState('');
+  const [groupAvatarFile, setGroupAvatarFile] = useState<File | null>(null);
   const hasRequestedUsersRef = useRef(false);
   const [notificationApi, notificationContextHolder] = notification.useNotification();
   const [directoryRoleScope, setDirectoryRoleScope] = useState<ChatUser['role']>(
@@ -149,6 +192,73 @@ const WorkspacePanel = ({
   );
 
   const formatUserOption = (user: ChatUser) => `${user.name} (${user.registrationNumber}) - ${user.email}`;
+
+  const groupEligibleUsers = useMemo(() => {
+    if (currentUser.role === 'superadmin') {
+      return users.filter((user) => user.role === 'admin' || user.role === 'user');
+    }
+
+    if (currentUser.role === 'admin') {
+      return users.filter((user) => user.role === 'user');
+    }
+
+    return [];
+  }, [currentUser.role, users]);
+
+  const selectedGroup = useMemo(
+    () => groups.find((group) => group.id === selectedGroupId) || null,
+    [groups, selectedGroupId]
+  );
+
+  useEffect(() => {
+    if (!selectedGroup) {
+      setGroupEditForm({ name: '', description: '' });
+      setGroupMemberAddIds([]);
+      setGroupMemberRemoveIds([]);
+      setNewOwnerId('');
+      return;
+    }
+
+    setGroupEditForm({
+      name: selectedGroup.name || '',
+      description: selectedGroup.description || '',
+    });
+    setGroupMemberAddIds([]);
+    setGroupMemberRemoveIds([]);
+    setNewOwnerId('');
+    setGroupAvatarFile(null);
+  }, [selectedGroup]);
+
+  const selectedGroupMembers = useMemo(
+    () => (selectedGroup?.members ? selectedGroup.members : []),
+    [selectedGroup]
+  );
+
+  const selectedGroupMemberIdsSet = useMemo(
+    () => new Set(selectedGroupMembers.map((member) => member.id)),
+    [selectedGroupMembers]
+  );
+
+  const addableGroupMembers = useMemo(
+    () => groupEligibleUsers.filter((user) => !selectedGroupMemberIdsSet.has(user.id)),
+    [groupEligibleUsers, selectedGroupMemberIdsSet]
+  );
+
+  const removableGroupMembers = useMemo(
+    () =>
+      selectedGroupMembers.filter((member) => member.id !== selectedGroup?.createdById),
+    [selectedGroup?.createdById, selectedGroupMembers]
+  );
+
+  const transferOwnerCandidates = useMemo(
+    () =>
+      selectedGroupMembers.filter((member) => member.id !== selectedGroup?.createdById),
+    [selectedGroup?.createdById, selectedGroupMembers]
+  );
+
+  const isSelectedGroupOwner = Boolean(
+    selectedGroup && selectedGroup.createdById && selectedGroup.createdById === currentUser.id
+  );
 
   useEffect(() => {
     if (!['directory', 'permissions'].includes(activeScreen)) {
@@ -282,6 +392,265 @@ const WorkspacePanel = ({
       });
     } finally {
       setDirectoryBusy(false);
+    }
+  };
+
+  const handleCreateGroup = async () => {
+    const name = groupForm.name.trim();
+    const description = groupForm.description.trim();
+
+    if (!name) {
+      notificationApi.warning({
+        message: 'Missing group name',
+        description: 'Group name is required.',
+      });
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      const created = await createGroup({
+        name,
+        description,
+        memberIds: selectedGroupMemberIds,
+      });
+
+      if (groupCreateAvatarFile) {
+        await uploadGroupAvatar(created.id, groupCreateAvatarFile);
+      }
+
+      notificationApi.success({
+        message: 'Group created',
+        description: `${created.name} has been created successfully.`,
+      });
+
+      setGroupForm({ name: '', description: '' });
+      setSelectedGroupMemberIds([]);
+      setGroupCreateAvatarFile(null);
+    } catch {
+      notificationApi.error({
+        message: 'Group creation failed',
+        description: 'Could not create group. Verify permissions and try again.',
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleUpdateGroup = async () => {
+    if (!selectedGroup) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await updateGroup(selectedGroup.id, {
+        name: groupEditForm.name,
+        description: groupEditForm.description,
+      });
+      notificationApi.success({
+        message: 'Group updated',
+        description: `${groupEditForm.name || selectedGroup.name} updated successfully.`,
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Update failed',
+        description: 'Could not update this group.',
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleAddGroupMembers = async () => {
+    if (!selectedGroup || groupMemberAddIds.length === 0) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await addGroupMembers(selectedGroup.id, groupMemberAddIds);
+      setGroupMemberAddIds([]);
+      notificationApi.success({
+        message: 'Members added',
+        description: 'Selected members were added to the group.',
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Add members failed',
+        description: 'Could not add selected members.',
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleRemoveGroupMembers = async () => {
+    if (!selectedGroup || groupMemberRemoveIds.length === 0) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await removeGroupMembers(selectedGroup.id, groupMemberRemoveIds);
+      setGroupMemberRemoveIds([]);
+      notificationApi.success({
+        message: 'Members removed',
+        description: 'Selected members were removed from the group.',
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Remove members failed',
+        description: 'Could not remove selected members.',
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleTransferOwnership = async () => {
+    if (!selectedGroup || !newOwnerId) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await transferGroupOwnership(selectedGroup.id, newOwnerId);
+      setNewOwnerId('');
+      notificationApi.success({
+        message: 'Ownership transferred',
+        description: 'Group ownership updated successfully.',
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Transfer failed',
+        description: 'Could not transfer group ownership.',
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!selectedGroup) {
+      return;
+    }
+
+    const shouldLeave = window.confirm(`Leave group ${selectedGroup.name}?`);
+    if (!shouldLeave) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await leaveGroup(selectedGroup.id);
+      setSelectedGroupId('');
+      notificationApi.success({
+        message: 'Left group',
+        description: `You left ${selectedGroup.name}.`,
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Leave failed',
+        description: `Could not leave ${selectedGroup.name}.`,
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!selectedGroup) {
+      return;
+    }
+
+    const shouldDelete = window.confirm(`Delete group ${selectedGroup.name}? This cannot be undone.`);
+    if (!shouldDelete) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await deleteGroup(selectedGroup.id);
+      setSelectedGroupId('');
+      notificationApi.success({
+        message: 'Group deleted',
+        description: `${selectedGroup.name} has been deleted.`,
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Delete failed',
+        description: `Could not delete ${selectedGroup.name}.`,
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleUploadGroupAvatar = async () => {
+    if (!selectedGroup || !groupAvatarFile) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await uploadGroupAvatar(selectedGroup.id, groupAvatarFile);
+      setGroupAvatarFile(null);
+      notificationApi.success({
+        message: 'Group picture updated',
+        description: `${selectedGroup.name} picture updated successfully.`,
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Upload failed',
+        description: 'Could not update group picture.',
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handlePromoteAdmin = async (userId: string, name: string) => {
+    if (!selectedGroup) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await promoteGroupAdmin(selectedGroup.id, userId);
+      notificationApi.success({
+        message: 'Admin updated',
+        description: `${name} is now a group admin.`,
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Promotion failed',
+        description: `Could not make ${name} an admin.`,
+      });
+    } finally {
+      setGroupBusy(false);
+    }
+  };
+
+  const handleDemoteAdmin = async (userId: string, name: string) => {
+    if (!selectedGroup) {
+      return;
+    }
+
+    setGroupBusy(true);
+    try {
+      await demoteGroupAdmin(selectedGroup.id, userId);
+      notificationApi.success({
+        message: 'Admin updated',
+        description: `${name} is now a regular member.`,
+      });
+    } catch {
+      notificationApi.error({
+        message: 'Demotion failed',
+        description: `Could not demote ${name}.`,
+      });
+    } finally {
+      setGroupBusy(false);
     }
   };
 
@@ -582,6 +951,332 @@ const WorkspacePanel = ({
             />
             {managedUsersAll.length === 0 ? (
               <p className={emptyStateClass}>No {managedRoleLabel} found in your scope.</p>
+            ) : null}
+          </section>
+        ) : null}
+
+        {activeScreen === 'groups' ? (
+          <section className={panelClass}>
+            <h3 className={sectionTitleClass}>Groups Workspace</h3>
+            {currentUser.role === 'admin' || currentUser.role === 'superadmin' ? (
+              <div className="theme-panel theme-border mb-4 grid gap-2 rounded-xl border p-3">
+                <p className="theme-subtext text-[11px] font-semibold uppercase tracking-wide">
+                  Create New Group
+                </p>
+                <AppInput
+                  value={groupForm.name}
+                  placeholder="Group name"
+                  onChange={(event) =>
+                    setGroupForm((prev) => ({
+                      ...prev,
+                      name: event.target.value,
+                    }))
+                  }
+                />
+                <AppInput
+                  value={groupForm.description}
+                  placeholder="Rules and regulations (owner controlled)"
+                  onChange={(event) =>
+                    setGroupForm((prev) => ({
+                      ...prev,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+                <div className="theme-soft theme-border rounded-lg border px-3 py-2">
+                  <label className="theme-subtext mb-1 block text-[11px] font-semibold uppercase tracking-wide">
+                    Group Picture
+                  </label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(event) => setGroupCreateAvatarFile(event.target.files?.[0] || null)}
+                    className="block w-full text-xs"
+                  />
+                  {groupCreateAvatarFile ? (
+                    <p className="theme-subtext mt-1 truncate text-[11px]">Selected: {groupCreateAvatarFile.name}</p>
+                  ) : null}
+                </div>
+                <AppSelect
+                  mode="multiple"
+                  allowClear
+                  placeholder="Select members"
+                  value={selectedGroupMemberIds}
+                  options={groupEligibleUsers.map((user) => ({
+                    value: user.id,
+                    label: formatUserOption(user),
+                  }))}
+                  onChange={(value) => {
+                    const nextValues = Array.isArray(value) ? value : [value];
+                    setSelectedGroupMemberIds(nextValues.map((item) => String(item)));
+                  }}
+                  onClear={() => setSelectedGroupMemberIds([])}
+                />
+                <div className="flex items-center gap-2">
+                  <Button type="primary" loading={groupBusy} onClick={() => void handleCreateGroup()}>
+                    Create Group
+                  </Button>
+                  <Button
+                    disabled={groupBusy}
+                    onClick={() => {
+                      setGroupForm({ name: '', description: '' });
+                      setSelectedGroupMemberIds([]);
+                      setGroupCreateAvatarFile(null);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className={`${emptyStateClass} mb-4`}>
+                Only admins and superadmins can create groups.
+              </p>
+            )}
+
+            <h4 className="theme-subtext mb-2 text-[11px] font-semibold uppercase tracking-wide">
+              Your Groups
+            </h4>
+            <ul className="grid gap-2">
+              {groups.map((group) => (
+                <li key={group.id}>
+                  <button
+                    type="button"
+                    className={`${listButtonClass} ${selectedGroupId === group.id ? 'border border-[color:var(--accent-bg)] bg-[color:var(--panel-muted-bg)]' : ''}`}
+                    onClick={() => setSelectedGroupId(group.id)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
+                        {group.avatar ? (
+                          <img src={group.avatar} alt={group.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs font-bold text-slate-600">
+                            {group.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="block truncate font-semibold">{group.name}</span>
+                        <span className="theme-subtext mt-1 block truncate text-xs">
+                          {group.description || 'No description'}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            {groups.length === 0 ? <p className={`${emptyStateClass} mt-2`}>No groups found.</p> : null}
+
+            {selectedGroup ? (
+              <div className="theme-panel theme-border mt-4 grid gap-3 rounded-xl border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="theme-subtext text-[11px] font-semibold uppercase tracking-wide">
+                    Manage Group
+                  </p>
+                  <button
+                    type="button"
+                    className="theme-accent-btn rounded-lg px-2.5 py-1.5 text-xs font-semibold"
+                    onClick={() =>
+                      void loadConversation({
+                        kind: 'group',
+                        id: selectedGroup.id,
+                        name: selectedGroup.name,
+                        avatar: selectedGroup.avatar || null,
+                      })
+                    }
+                  >
+                    Open Chat
+                  </button>
+                </div>
+
+                <div className="theme-soft theme-border rounded-lg border p-2">
+                  <div className="flex items-center gap-3">
+                    <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
+                      {selectedGroup.avatar ? (
+                        <img src={selectedGroup.avatar} alt={selectedGroup.name} className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-base font-bold text-slate-600">
+                          {selectedGroup.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold">{selectedGroup.name}</p>
+                      <p className="theme-subtext truncate text-xs">{selectedGroup.description || 'No description'}</p>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => setGroupAvatarFile(event.target.files?.[0] || null)}
+                      className="block min-w-0 flex-1 text-xs"
+                    />
+                    <Button
+                      size="small"
+                      disabled={!groupAvatarFile}
+                      loading={groupBusy}
+                      onClick={() => void handleUploadGroupAvatar()}
+                    >
+                      Update Picture
+                    </Button>
+                  </div>
+                </div>
+
+                <AppInput
+                  value={groupEditForm.name}
+                  placeholder="Group name"
+                  onChange={(event) =>
+                    setGroupEditForm((prev) => ({
+                      ...prev,
+                      name: event.target.value,
+                    }))
+                  }
+                />
+                <AppInput
+                  value={groupEditForm.description}
+                  placeholder="Group rules and regulations"
+                  disabled={!isSelectedGroupOwner}
+                  onChange={(event) =>
+                    setGroupEditForm((prev) => ({
+                      ...prev,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+                {!isSelectedGroupOwner ? (
+                  <p className="theme-subtext text-[11px]">
+                    Only the owner can edit rules and regulations (group description).
+                  </p>
+                ) : null}
+                <Button loading={groupBusy} type="primary" onClick={() => void handleUpdateGroup()}>
+                  Update Group Info
+                </Button>
+
+                <AppSelect
+                  mode="multiple"
+                  allowClear
+                  placeholder="Add new members"
+                  value={groupMemberAddIds}
+                  options={addableGroupMembers.map((member) => ({
+                    value: member.id,
+                    label: formatUserOption(member),
+                  }))}
+                  onChange={(value) => {
+                    const nextValues = Array.isArray(value) ? value : [value];
+                    setGroupMemberAddIds(nextValues.map((item) => String(item)));
+                  }}
+                  onClear={() => setGroupMemberAddIds([])}
+                />
+                <Button loading={groupBusy} onClick={() => void handleAddGroupMembers()}>
+                  Add Members
+                </Button>
+
+                <AppSelect
+                  mode="multiple"
+                  allowClear
+                  placeholder="Remove members"
+                  value={groupMemberRemoveIds}
+                  options={removableGroupMembers.map((member) => ({
+                    value: member.id,
+                    label: `${member.name} (${member.registrationNumber || 'N/A'})`,
+                  }))}
+                  onChange={(value) => {
+                    const nextValues = Array.isArray(value) ? value : [value];
+                    setGroupMemberRemoveIds(nextValues.map((item) => String(item)));
+                  }}
+                  onClear={() => setGroupMemberRemoveIds([])}
+                />
+                <Button danger loading={groupBusy} onClick={() => void handleRemoveGroupMembers()}>
+                  Remove Members
+                </Button>
+
+                {isSelectedGroupOwner ? (
+                  <>
+                    <AppSelect
+                      allowClear
+                      placeholder="Transfer ownership to"
+                      value={newOwnerId || undefined}
+                      options={transferOwnerCandidates.map((member) => ({
+                        value: member.id,
+                        label: `${member.name} (${member.registrationNumber || 'N/A'})`,
+                      }))}
+                      onChange={(value) => setNewOwnerId(String(value || ''))}
+                      onClear={() => setNewOwnerId('')}
+                    />
+                    <Button loading={groupBusy} onClick={() => void handleTransferOwnership()}>
+                      Transfer Ownership
+                    </Button>
+                  </>
+                ) : null}
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button
+                    danger
+                    disabled={groupBusy || isSelectedGroupOwner}
+                    onClick={() => void handleLeaveGroup()}
+                  >
+                    Leave Group
+                  </Button>
+                  <Button danger loading={groupBusy} onClick={() => void handleDeleteGroup()}>
+                    Delete Group
+                  </Button>
+                </div>
+
+                <div className="theme-border rounded-lg border p-2">
+                  <p className="theme-subtext mb-1 text-[11px] font-semibold uppercase tracking-wide">
+                    Members ({selectedGroup.memberCount || selectedGroupMembers.length})
+                  </p>
+                  <ul className="grid max-h-44 gap-1 overflow-y-auto">
+                    {selectedGroupMembers.map((member) => (
+                      <li key={member.id} className="theme-soft rounded-md px-2 py-1 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <div className="h-7 w-7 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
+                              {member.avatar ? (
+                                <img src={member.avatar} alt={member.name} className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-[10px] font-bold text-slate-600">
+                                  {member.name.charAt(0).toUpperCase()}
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <span className="truncate font-semibold">{member.name}</span>
+                              <span className="theme-subtext ml-1">{member.registrationNumber || ''}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="theme-muted theme-subtext rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase">
+                              {member.role || (selectedGroup.createdById === member.id ? 'owner' : 'member')}
+                            </span>
+                            {isSelectedGroupOwner && member.id !== selectedGroup.createdById ? (
+                              member.role === 'admin' ? (
+                                <button
+                                  type="button"
+                                  className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800"
+                                  onClick={() => void handleDemoteAdmin(member.id, member.name)}
+                                >
+                                  Demote
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800"
+                                  onClick={() => void handlePromoteAdmin(member.id, member.name)}
+                                >
+                                  Make admin
+                                </button>
+                              )
+                            ) : null}
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
             ) : null}
           </section>
         ) : null}

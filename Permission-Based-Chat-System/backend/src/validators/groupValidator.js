@@ -26,10 +26,15 @@ const transferOwnershipValidator = [
   body('newOwnerId').custom(isUuid).withMessage('newOwnerId must be a valid user ID'),
 ];
 
+const groupMemberRoleChangeValidator = [
+  body('userId').custom(isUuid).withMessage('userId must be a valid user ID'),
+];
+
 module.exports = {
   groupIdParamValidator,
   createGroupValidator,
   updateGroupValidator,
   membersValidator,
   transferOwnershipValidator,
+  groupMemberRoleChangeValidator,
 };

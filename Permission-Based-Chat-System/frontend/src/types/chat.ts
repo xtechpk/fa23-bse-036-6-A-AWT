@@ -10,6 +10,34 @@ export interface ChatUser {
   isActive?: boolean;
   avatar?: string | null;
   uiDensityMode?: DensityMode;
+  twoFactorEnabled?: boolean;
+  twoFactorEnabledAt?: string | null;
+}
+
+export interface TwoFactorChallengePayload {
+  challengeId: string;
+  expiresAt?: string;
+  purpose?: 'login' | 'enable' | string;
+  deliveryChannel?: string;
+  qrImageDataUrl?: string;
+  manualEntryKey?: string;
+  otpAuthUrl?: string;
+}
+
+export interface RecoveryCodeStatus {
+  total: number;
+  used: number;
+  remaining: number;
+}
+
+export interface TwoFactorEnableVerifyResult {
+  user: ChatUser;
+  recoveryCodes: string[];
+}
+
+export interface RecoveryCodesRegenerateResult {
+  recoveryCodes: string[];
+  status: RecoveryCodeStatus;
 }
 
 export interface ChatGroup {
@@ -17,6 +45,28 @@ export interface ChatGroup {
   _id?: string;
   name: string;
   description?: string;
+  avatar?: string | null;
+  createdById?: string;
+  createdBy?: {
+    id: string;
+    _id?: string;
+    name: string;
+    email?: string;
+    registrationNumber?: string;
+    isActive?: boolean;
+  } | null;
+  members?: Array<{
+    id: string;
+    _id?: string;
+    name: string;
+    email?: string;
+    registrationNumber?: string;
+    isActive?: boolean;
+    avatar?: string | null;
+    role?: 'owner' | 'admin' | 'member' | string;
+    joinedAt?: string;
+  }>;
+  memberCount?: number;
 }
 
 export interface UploadedAttachment {
@@ -46,7 +96,7 @@ export interface ChatMessage {
   createdAt: string;
   messageType?: 'private' | 'group' | string;
   status?: string;
-  tick?: 'single' | 'double' | 'blue';
+  tick?: 'sent' | 'delivered' | 'read' | 'single' | 'double' | 'blue';
   senderId: string;
   receiverId?: string | null;
   groupId?: string | null;
@@ -64,7 +114,7 @@ export interface ChatMessage {
   seenBy?: string[];
   oneTime?: boolean;
   attachments?: UploadedAttachment[];
-  group?: (Pick<ChatGroup, 'id' | 'name'> & { _id?: string }) | null;
+  group?: (Pick<ChatGroup, 'id' | 'name' | 'avatar'> & { _id?: string }) | null;
   receiver?:
     | (Pick<ChatUser, 'id' | 'name' | 'registrationNumber' | 'avatar'> & { _id?: string })
     | null;
@@ -128,6 +178,8 @@ export interface LoginResult {
     refreshToken: string;
   };
   requiresTwoFactor?: boolean;
+  twoFactor?: TwoFactorChallengePayload;
+  debugCode?: string;
 }
 
 export interface RegisterPayload {
@@ -141,7 +193,7 @@ export type DensityMode = 'comfortable' | 'compact';
 
 export type ChatTarget =
   | { kind: 'private'; id: string; name: string; avatar?: string | null }
-  | { kind: 'group'; id: string; name: string };
+  | { kind: 'group'; id: string; name: string; avatar?: string | null };
 
 export const SOCKET_EVENTS = {
   privateMessage: 'private_message',

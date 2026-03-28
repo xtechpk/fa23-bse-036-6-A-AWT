@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react';
 import { ChatMessage, ChatTarget, ChatUser, DensityMode, UploadedAttachment } from '../../types/chat';
+import { toAbsoluteAssetUrl } from '../../utils/assetUrl';
 
 interface ChatPanelProps {
   densityMode: DensityMode;
@@ -44,9 +45,9 @@ const getAttachmentUrl = (messageAttachment: UploadedAttachment) => {
 };
 
 const getTickDisplay = (tick?: ChatMessage['tick']) => {
-  if (tick === 'single') return { symbol: '✓', className: 'text-slate-500' };
-  if (tick === 'double') return { symbol: '✓✓', className: 'text-slate-500' };
-  if (tick === 'blue') return { symbol: '✓✓', className: 'text-sky-600' };
+  if (tick === 'sent' || tick === 'single') return { symbol: '✓', className: 'text-slate-500' };
+  if (tick === 'delivered' || tick === 'double') return { symbol: '✓✓', className: 'text-slate-500' };
+  if (tick === 'read' || tick === 'blue') return { symbol: '✓✓', className: 'text-sky-600' };
   return { symbol: '', className: 'text-slate-500' };
 };
 
@@ -89,6 +90,7 @@ const ChatPanel = ({
   const messageListBottomRef = useRef<HTMLDivElement | null>(null);
   const rowGapClass = densityMode === 'compact' ? 'gap-2 px-3 py-3' : 'gap-3 px-4 py-4';
   const bubbleBase = densityMode === 'compact' ? 'px-3 py-2' : 'px-3.5 py-2.5';
+  const activeTargetAvatar = toAbsoluteAssetUrl(activeTarget?.avatar || null);
 
   useEffect(() => {
     if (chatBusy) {
@@ -118,11 +120,11 @@ const ChatPanel = ({
           >
             Menu
           </button>
-          {activeTarget?.kind === 'private' ? (
+          {activeTarget ? (
             <div className="h-9 w-9 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
-              {activeTarget.avatar ? (
+              {activeTargetAvatar ? (
                 <img
-                  src={activeTarget.avatar}
+                  src={activeTargetAvatar}
                   alt={activeTarget.name}
                   className="h-full w-full object-cover"
                 />
@@ -201,6 +203,8 @@ const ChatPanel = ({
         {messages.map((message) => {
           const mine = message.senderId === currentUser.id;
           const tick = getTickDisplay(message.tick);
+          const senderAvatar = toAbsoluteAssetUrl(message.sender?.avatar || null);
+          const mineAvatar = toAbsoluteAssetUrl(message.sender?.avatar || currentUser.avatar || null);
           return (
             <article
               key={message.id}
@@ -209,9 +213,9 @@ const ChatPanel = ({
               <div className="flex items-start gap-2">
                 {!mine ? (
                   <div className="mt-1 h-8 w-8 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
-                    {message.sender?.avatar ? (
+                    {senderAvatar ? (
                       <img
-                        src={message.sender.avatar}
+                        src={senderAvatar}
                         alt={message.sender?.name || 'User'}
                         className="h-full w-full object-cover"
                       />
@@ -324,6 +328,21 @@ const ChatPanel = ({
                 <span className={tick.className}>{tick.symbol}</span>
               </footer>
                 </div>
+                {mine ? (
+                  <div className="mt-1 h-8 w-8 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
+                    {mineAvatar ? (
+                      <img
+                        src={mineAvatar}
+                        alt={currentUser.name || 'You'}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-xs font-bold text-slate-600">
+                        {(currentUser.name || 'Y').charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
             </article>
           );

@@ -1,15 +1,16 @@
 const express = require('express');
 const groupController = require('../controllers/groupController');
 const { protect } = require('../middlewares/authMiddleware');
-const allowRoles = require('../middlewares/roleMiddleware');
 const validate = require('../middlewares/validateMiddleware');
 const { cacheGet, invalidateOnWrite } = require('../middlewares/cacheMiddleware');
+const { uploadAvatar } = require('../middlewares/uploadMiddleware');
 const {
   groupIdParamValidator,
   createGroupValidator,
   updateGroupValidator,
   membersValidator,
   transferOwnershipValidator,
+  groupMemberRoleChangeValidator,
 } = require('../validators/groupValidator');
 
 const router = express.Router();
@@ -26,17 +27,14 @@ router.use(
   ])
 );
 
-// Any authenticated user can view their own groups or leave a group
+// Any authenticated user can manage groups subject to ownership/admin membership checks.
 router.get(
   '/my',
   cacheGet({ resource: 'mygroups', scope: 'user', ttlSeconds: 120 }),
   groupController.getMyGroups
 );
-router.post('/:id/leave', groupIdParamValidator, validate, groupController.leaveGroup);
-
-// Admin-only group management
-router.use(allowRoles('admin'));
 router.post('/', createGroupValidator, validate, groupController.createGroup);
+router.post('/:id/leave', groupIdParamValidator, validate, groupController.leaveGroup);
 router.get(
   '/',
   cacheGet({ resource: 'groups', scope: 'global', ttlSeconds: 300 }),
@@ -79,5 +77,18 @@ router.patch(
   validate,
   groupController.transferOwnership
 );
+router.patch(
+  '/:id/admins/promote',
+  [...groupIdParamValidator, ...groupMemberRoleChangeValidator],
+  validate,
+  groupController.promoteGroupAdmin
+);
+router.patch(
+  '/:id/admins/demote',
+  [...groupIdParamValidator, ...groupMemberRoleChangeValidator],
+  validate,
+  groupController.demoteGroupAdmin
+);
+router.post('/:id/avatar', groupIdParamValidator, validate, uploadAvatar, groupController.uploadGroupAvatar);
 
 module.exports = router;

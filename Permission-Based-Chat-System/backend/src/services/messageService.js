@@ -52,9 +52,9 @@ const MESSAGE_CACHE_RESOURCES = [
 ];
 
 const STATUS_TICK = {
-  [MESSAGE_STATUS.SENT]: 'single',
-  [MESSAGE_STATUS.DELIVERED]: 'double',
-  [MESSAGE_STATUS.READ]: 'blue',
+  [MESSAGE_STATUS.SENT]: 'sent',
+  [MESSAGE_STATUS.DELIVERED]: 'delivered',
+  [MESSAGE_STATUS.READ]: 'read',
 };
 
 const normalizeAttachmentIds = (attachmentIds = []) => {
@@ -157,10 +157,24 @@ const loadGroupsMap = async (groupIds) => {
 
   const groups = await prisma.group.findMany({
     where: { id: { in: uniqueIds } },
-    select: { id: true, name: true, description: true },
+    select: { id: true, name: true, description: true, avatarFileId: true },
   });
 
-  return new Map(groups.map((group) => [group.id, { ...group, _id: group.id }]));
+  const avatarFileIds = groups.map((group) => group.avatarFileId).filter(Boolean);
+  const groupAvatarsMap = await getFileAssetsMap(avatarFileIds);
+
+  return new Map(
+    groups.map((group) => [
+      group.id,
+      {
+        ...group,
+        _id: group.id,
+        avatar: group.avatarFileId
+          ? groupAvatarsMap.get(String(group.avatarFileId))?.publicUrl || null
+          : null,
+      },
+    ])
+  );
 };
 
 const loadReplyMessagesMap = async (replyIds) => {
@@ -838,14 +852,26 @@ const getInboxConversations = async ({ userId }) => {
     groupMap.size
       ? prisma.group.findMany({
           where: { id: { in: [...groupMap.keys()] } },
-          select: { id: true, name: true },
+          select: { id: true, name: true, avatarFileId: true },
         })
       : Promise.resolve([]),
   ]);
 
   const enrichedPeers = await hydrateUsersWithAvatars(peers);
   const peerById = new Map(enrichedPeers.map((user) => [user.id, user]));
-  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const groupAvatarFileIds = groups.map((group) => group.avatarFileId).filter(Boolean);
+  const groupAvatarsMap = await getFileAssetsMap(groupAvatarFileIds);
+  const groupById = new Map(
+    groups.map((group) => [
+      group.id,
+      {
+        ...group,
+        avatar: group.avatarFileId
+          ? groupAvatarsMap.get(String(group.avatarFileId))?.publicUrl || null
+          : null,
+      },
+    ])
+  );
 
   const items = [];
 
@@ -1192,6 +1218,106 @@ const deleteMessage = async ({ userId, messageId, deleteFor = 'me' }) => {
   return { messageId: safeMessageId, deletedFor: 'me' };
 };
 
+const softDeleteConversationForUser = async ({ userId, where }) => {
+  const safeUserId = normalizeId(userId);
+  const messages = await prisma.message.findMany({
+    where: {
+      ...where,
+      NOT: { deletedFor: { has: safeUserId } },
+    },
+    select: { id: true, deletedFor: true },
+  });
+
+  if (messages.length === 0) {
+    return 0;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const message of messages) {
+      const currentDeletedFor = Array.isArray(message.deletedFor) ? message.deletedFor : [];
+      if (currentDeletedFor.includes(safeUserId)) {
+        continue;
+      }
+
+      await tx.message.update({
+        where: { id: message.id },
+        data: { deletedFor: [...currentDeletedFor, safeUserId] },
+      });
+    }
+  });
+
+  return messages.length;
+};
+
+const deletePrivateConversation = async ({ userId, otherUserId }) => {
+  const safeUserId = normalizeId(userId);
+  const safeOtherUserId = normalizeId(otherUserId);
+
+  if (safeUserId === safeOtherUserId) {
+    throw new ApiError(400, 'Invalid conversation target');
+  }
+
+  const peer = await prisma.user.findUnique({
+    where: { id: safeOtherUserId },
+    select: { id: true },
+  });
+
+  if (!peer) {
+    throw new ApiError(404, 'Conversation user not found');
+  }
+
+  const deletedMessagesCount = await softDeleteConversationForUser({
+    userId: safeUserId,
+    where: {
+      messageType: MESSAGE_TYPES.PRIVATE,
+      OR: [
+        { senderId: safeUserId, receiverId: safeOtherUserId },
+        { senderId: safeOtherUserId, receiverId: safeUserId },
+      ],
+    },
+  });
+
+  await invalidateResources(MESSAGE_CACHE_RESOURCES);
+
+  return {
+    deletedFor: 'me',
+    conversationType: MESSAGE_TYPES.PRIVATE,
+    conversationId: safeOtherUserId,
+    deletedMessagesCount,
+  };
+};
+
+const deleteGroupConversation = async ({ userId, groupId }) => {
+  const safeUserId = normalizeId(userId);
+  const safeGroupId = normalizeId(groupId);
+
+  const groupMembership = await prisma.groupMember.findUnique({
+    where: { groupId_userId: { groupId: safeGroupId, userId: safeUserId } },
+    select: { userId: true },
+  });
+
+  if (!groupMembership) {
+    throw new ApiError(403, 'Only group members can delete this conversation');
+  }
+
+  const deletedMessagesCount = await softDeleteConversationForUser({
+    userId: safeUserId,
+    where: {
+      messageType: MESSAGE_TYPES.GROUP,
+      groupId: safeGroupId,
+    },
+  });
+
+  await invalidateResources(MESSAGE_CACHE_RESOURCES);
+
+  return {
+    deletedFor: 'me',
+    conversationType: MESSAGE_TYPES.GROUP,
+    conversationId: safeGroupId,
+    deletedMessagesCount,
+  };
+};
+
 module.exports = {
   sendPrivateMessage,
   sendGroupMessage,
@@ -1203,4 +1329,6 @@ module.exports = {
   markPrivateMessagesDelivered,
   editMessage,
   deleteMessage,
+  deletePrivateConversation,
+  deleteGroupConversation,
 };

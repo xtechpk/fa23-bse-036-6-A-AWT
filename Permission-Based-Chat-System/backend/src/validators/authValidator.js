@@ -50,10 +50,8 @@ const twoFactorVerifyLoginValidator = [
   body('challengeId').custom(isUuid).withMessage('challengeId must be a valid challenge ID'),
   body('code')
     .trim()
-    .isLength({ min: 6, max: 6 })
-    .withMessage('code must be exactly 6 digits')
-    .matches(/^\d{6}$/)
-    .withMessage('code must be numeric'),
+    .matches(/^(\d{6}|[A-Za-z0-9]{4}-[A-Za-z0-9]{4})$/)
+    .withMessage('code must be a 6-digit OTP or recovery code format (XXXX-XXXX)'),
   ...baseLocationValidator,
 ];
 
@@ -71,6 +69,16 @@ const twoFactorEnableVerifyValidator = [
 ];
 
 const twoFactorDisableValidator = [
+  body('code')
+    .trim()
+    .isLength({ min: 6, max: 6 })
+    .withMessage('code must be exactly 6 digits')
+    .matches(/^\d{6}$/)
+    .withMessage('code must be numeric'),
+  ...baseLocationValidator,
+];
+
+const twoFactorRecoveryRegenerateValidator = [
   body('currentPassword').notEmpty().withMessage('currentPassword is required'),
   ...baseLocationValidator,
 ];
@@ -87,5 +95,6 @@ module.exports = {
   twoFactorEnableStartValidator,
   twoFactorEnableVerifyValidator,
   twoFactorDisableValidator,
+  twoFactorRecoveryRegenerateValidator,
   sessionIdParamValidator,
 };

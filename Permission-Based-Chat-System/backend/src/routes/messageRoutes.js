@@ -13,6 +13,8 @@ const {
   markReadValidator,
   editMessageValidator,
   deleteMessageValidator,
+  deletePrivateConversationValidator,
+  deleteGroupConversationValidator,
 } = require('../validators/messageValidator');
 
 const router = express.Router();
@@ -61,5 +63,17 @@ router.get(
 router.patch('/:id/read', markReadValidator, validate, messageController.markMessageRead);
 router.patch('/:id', editMessageValidator, validate, messageController.editMessage);
 router.delete('/:id', deleteMessageValidator, validate, messageController.deleteMessage);
+router.delete(
+  '/private/:userId',
+  deletePrivateConversationValidator,
+  validate,
+  messageController.deletePrivateConversation
+);
+router.delete(
+  '/group/:groupId',
+  deleteGroupConversationValidator,
+  validate,
+  messageController.deleteGroupConversation
+);
 
 module.exports = router;

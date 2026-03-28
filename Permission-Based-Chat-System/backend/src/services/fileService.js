@@ -11,6 +11,7 @@ const FILE_CATEGORIES = {
 const FILE_ATTACHMENT_TYPES = {
   MESSAGE: 'message',
   USER_AVATAR: 'user_avatar',
+  GROUP_AVATAR: 'group_avatar',
 };
 
 const normalizeId = (value, fieldName = 'id') => {
@@ -219,6 +220,69 @@ const setUserAvatarFromUpload = async ({ file, userId, client = prisma }) => {
   };
 };
 
+const setGroupAvatarFromUpload = async ({ file, userId, groupId, client = prisma }) => {
+  const safeUserId = normalizeId(userId, 'userId');
+  const safeGroupId = normalizeId(groupId, 'groupId');
+
+  if (!file) {
+    throw new ApiError(400, 'Group avatar file is required');
+  }
+
+  const created = await createFileAssetsFromUploads({
+    files: [file],
+    userId: safeUserId,
+    category: FILE_CATEGORIES.AVATAR,
+    folder: 'chat',
+    client,
+  });
+
+  const avatarFile = created[0];
+
+  const group = await client.$transaction(async (tx) => {
+    const existingGroup = await tx.group.findUnique({
+      where: { id: safeGroupId },
+      select: { avatarFileId: true },
+    });
+
+    if (!existingGroup) {
+      throw new ApiError(404, 'Group not found');
+    }
+
+    if (existingGroup.avatarFileId) {
+      await tx.fileAsset.updateMany({
+        where: {
+          id: existingGroup.avatarFileId,
+          category: FILE_CATEGORIES.AVATAR,
+        },
+        data: {
+          attachedToType: null,
+          attachedToId: null,
+          isTemporary: true,
+        },
+      });
+    }
+
+    await tx.fileAsset.update({
+      where: { id: avatarFile.id },
+      data: {
+        isTemporary: false,
+        attachedToType: FILE_ATTACHMENT_TYPES.GROUP_AVATAR,
+        attachedToId: safeGroupId,
+      },
+    });
+
+    return tx.group.update({
+      where: { id: safeGroupId },
+      data: { avatarFileId: avatarFile.id },
+    });
+  });
+
+  return {
+    group,
+    avatarFile,
+  };
+};
+
 module.exports = {
   FILE_CATEGORIES,
   FILE_ATTACHMENT_TYPES,
@@ -229,4 +293,5 @@ module.exports = {
   assertOwnedFileAssets,
   attachFilesToEntity,
   setUserAvatarFromUpload,
+  setGroupAvatarFromUpload,
 };

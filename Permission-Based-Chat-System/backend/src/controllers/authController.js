@@ -2,7 +2,12 @@ const ApiResponse = require('../utils/ApiResponse');
 const authService = require('../services/authService');
 const { buildRequestMeta } = require('../utils/requestContext');
 const asyncHandler = require('../utils/asyncHandler');
-const { getFileAssetsByIds } = require('../services/fileService');
+const prisma = require('../utils/prismaClient');
+const {
+  FILE_ATTACHMENT_TYPES,
+  FILE_CATEGORIES,
+  getFileAssetsByIds,
+} = require('../services/fileService');
 
 const register = asyncHandler(async (req, res) => {
   const user = await authService.register(req.body);
@@ -94,7 +99,7 @@ const disableTwoFactor = asyncHandler(async (req, res) => {
   const user = await authService.disableTwoFactor(
     {
       userId: req.user._id,
-      currentPassword: req.body.currentPassword,
+      code: req.body.code,
     },
     { meta: buildRequestMeta(req, req.body?.location) }
   );
@@ -102,6 +107,32 @@ const disableTwoFactor = asyncHandler(async (req, res) => {
   return ApiResponse.success(res, {
     message: 'Two-factor authentication disabled successfully',
     data: user,
+  });
+});
+
+const regenerateRecoveryCodes = asyncHandler(async (req, res) => {
+  const result = await authService.regenerateRecoveryCodes(
+    {
+      userId: req.user._id,
+      currentPassword: req.body.currentPassword,
+    },
+    { meta: buildRequestMeta(req, req.body?.location) }
+  );
+
+  return ApiResponse.success(res, {
+    message: 'Recovery codes regenerated successfully',
+    data: result,
+  });
+});
+
+const getRecoveryCodeStatus = asyncHandler(async (req, res) => {
+  const status = await authService.getRecoveryCodeStatus({
+    userId: req.user._id,
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Recovery code status fetched successfully',
+    data: status,
   });
 });
 
@@ -126,10 +157,30 @@ const logout = asyncHandler(async (req, res) => {
 });
 
 const me = asyncHandler(async (req, res) => {
-  const avatarAssets = req.user?.avatarFileId
-    ? await getFileAssetsByIds([req.user.avatarFileId])
-    : [];
-  const avatarFile = avatarAssets[0] || null;
+  const [avatarAssets, fallbackAssets] = await Promise.all([
+    req.user?.avatarFileId ? getFileAssetsByIds([req.user.avatarFileId]) : Promise.resolve([]),
+    prisma.fileAsset.findMany({
+      where: {
+        attachedToType: FILE_ATTACHMENT_TYPES.USER_AVATAR,
+        attachedToId: String(req.user?._id || ''),
+        category: FILE_CATEGORIES.AVATAR,
+        isTemporary: false,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 1,
+    }),
+  ]);
+
+  const fallbackAvatar = fallbackAssets[0]
+    ? {
+        ...fallbackAssets[0],
+        _id: fallbackAssets[0].id,
+        url: fallbackAssets[0].publicUrl,
+        path: fallbackAssets[0].relativePath,
+        fileName: fallbackAssets[0].originalName,
+      }
+    : null;
+  const avatarFile = avatarAssets[0] || fallbackAvatar || null;
 
   return ApiResponse.success(res, {
     data: {
@@ -173,6 +224,8 @@ module.exports = {
   startEnableTwoFactor,
   verifyEnableTwoFactor,
   disableTwoFactor,
+  regenerateRecoveryCodes,
+  getRecoveryCodeStatus,
   refreshToken,
   logout,
   me,

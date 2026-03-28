@@ -62,6 +62,12 @@ enum UiDensityMode {
   compact
 }
 
+enum GroupMemberRole {
+  owner
+  admin
+  member
+}
+
 // ─────────────────────────────  Models  ─────────────────────────────────────
 
 model User {
@@ -75,6 +81,7 @@ model User {
   isActive           Boolean   @default(true)
   twoFactorEnabled   Boolean   @default(false)
   twoFactorEnabledAt DateTime?
+  twoFactorSecret    String?
   avatarFileId       String?   @unique
   lastSeen           DateTime?
   createdAt          DateTime  @default(now())
@@ -101,6 +108,7 @@ model User {
   unblockedIps            BlockedIp[]          @relation("IpUnblocker")
   auditLogs               AuditLog[]           @relation("AuditLogActor")
   twoFactorChallenges     TwoFactorChallenge[]
+  twoFactorRecoveryCodes  TwoFactorRecoveryCode[]
 
   @@index([name])
   @@index([email])
@@ -112,11 +120,13 @@ model Group {
   name        String   @unique
   description String?
   createdById String
+  avatarFileId String? @unique
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   // ── Relations ─────────────────────────────────────────────────────────────
   createdBy User          @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  avatarFile FileAsset?   @relation("GroupAvatarFile", fields: [avatarFileId], references: [id], onDelete: SetNull)
   members   GroupMember[]
   messages  Message[]     @relation("GroupMessages")
 
@@ -127,6 +137,7 @@ model GroupMember {
   id       String   @id @default(uuid())
   groupId  String
   userId   String
+  role     GroupMemberRole @default(member)
   joinedAt DateTime @default(now())
 
   // ── Relations ─────────────────────────────────────────────────────────────
@@ -193,6 +204,7 @@ model FileAsset {
   // ── Relations ─────────────────────────────────────────────────────────────
   owner         User  @relation("UserUploadedFiles", fields: [userId], references: [id], onDelete: Cascade)
   avatarForUser User? @relation("UserAvatarFile")
+  avatarForGroup Group? @relation("GroupAvatarFile")
 
   @@index([userId, category, createdAt])
   @@index([attachedToType, attachedToId])
@@ -380,4 +392,17 @@ model TwoFactorChallenge {
 
   @@index([userId, purpose, expiresAt])
   @@index([expiresAt, usedAt])
+}
+
+model TwoFactorRecoveryCode {
+  id        String   @id @default(uuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, usedAt])
 }

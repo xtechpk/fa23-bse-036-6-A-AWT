@@ -171,6 +171,30 @@ const deleteMessage = asyncHandler(async (req, res) => {
   });
 });
 
+const deletePrivateConversation = asyncHandler(async (req, res) => {
+  const result = await messageService.deletePrivateConversation({
+    userId: req.user._id,
+    otherUserId: req.params.userId,
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Private conversation deleted for you',
+    data: result,
+  });
+});
+
+const deleteGroupConversation = asyncHandler(async (req, res) => {
+  const result = await messageService.deleteGroupConversation({
+    userId: req.user._id,
+    groupId: req.params.groupId,
+  });
+
+  return ApiResponse.success(res, {
+    message: 'Group conversation deleted for you',
+    data: result,
+  });
+});
+
 module.exports = {
   sendPrivateMessage,
   sendGroupMessage,
@@ -182,4 +206,6 @@ module.exports = {
   uploadAttachments,
   editMessage,
   deleteMessage,
+  deletePrivateConversation,
+  deleteGroupConversation,
 };

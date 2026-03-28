@@ -1,10 +1,11 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const speakeasy = require('speakeasy');
+const QRCode = require('qrcode');
 const prisma = require('../utils/prismaClient');
 const ApiError = require('../utils/ApiError');
 const { ROLES } = require('../utils/constants');
 const { logAuditEvent } = require('./auditService');
-const { deliverTwoFactorCode } = require('./twoFactorDeliveryService');
 const {
   createAccessToken,
   createRefreshToken,
@@ -14,10 +15,12 @@ const {
 
 const TWO_FACTOR_CODE_EXPIRY_MINUTES = Number(process.env.TWO_FACTOR_CODE_EXPIRY_MINUTES || 10);
 const MAX_2FA_ATTEMPTS = Number(process.env.TWO_FACTOR_MAX_ATTEMPTS || 5);
+const TWO_FACTOR_ISSUER = process.env.TWO_FACTOR_ISSUER || 'Permission-Based Chat';
+const RECOVERY_CODES_COUNT = Number(process.env.TWO_FACTOR_RECOVERY_CODES_COUNT || 8);
 
 const sanitizeUser = (user) => {
   if (!user) return null;
-  const { password, ...safe } = user;
+  const { password, twoFactorSecret, ...safe } = user;
   return { ...safe, _id: safe.id };
 };
 
@@ -154,9 +157,86 @@ const buildTokens = async (user, meta = {}, existingSessionId = null) => {
 
 const generateSixDigitCode = () => String(crypto.randomInt(100000, 1000000));
 
-const createTwoFactorChallenge = async ({ userId, purpose, meta = {} }) => {
-  const code = generateSixDigitCode();
-  const codeHash = await bcrypt.hash(code, 10);
+const generateRecoveryCode = () => {
+  const raw = crypto.randomBytes(4).toString('hex').toUpperCase();
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+};
+
+const generateRecoveryCodes = (count = RECOVERY_CODES_COUNT) => {
+  const safeCount = Number.isFinite(count) ? Math.max(1, Math.min(20, count)) : RECOVERY_CODES_COUNT;
+  return Array.from({ length: safeCount }, () => generateRecoveryCode());
+};
+
+const replaceRecoveryCodesForUser = async (userId, count = RECOVERY_CODES_COUNT) => {
+  const plainCodes = generateRecoveryCodes(count);
+  const hashes = await Promise.all(plainCodes.map((code) => bcrypt.hash(code, 10)));
+
+  await prisma.$transaction([
+    prisma.twoFactorRecoveryCode.deleteMany({
+      where: { userId: String(userId) },
+    }),
+    prisma.twoFactorRecoveryCode.createMany({
+      data: hashes.map((codeHash) => ({
+        userId: String(userId),
+        codeHash,
+      })),
+    }),
+  ]);
+
+  return plainCodes;
+};
+
+const tryUseRecoveryCode = async ({ userId, code }) => {
+  const normalizedCode = String(code || '').trim().toUpperCase();
+  if (!normalizedCode) {
+    return false;
+  }
+
+  const rows = await prisma.twoFactorRecoveryCode.findMany({
+    where: {
+      userId: String(userId),
+      usedAt: null,
+    },
+    select: {
+      id: true,
+      codeHash: true,
+    },
+  });
+
+  for (const row of rows) {
+    const matches = await bcrypt.compare(normalizedCode, row.codeHash);
+    if (!matches) {
+      continue;
+    }
+
+    await prisma.twoFactorRecoveryCode.update({
+      where: { id: row.id },
+      data: { usedAt: new Date() },
+    });
+
+    return true;
+  }
+
+  return false;
+};
+
+const getRecoveryStatus = async (userId) => {
+  const where = { userId: String(userId) };
+  const [total, used] = await Promise.all([
+    prisma.twoFactorRecoveryCode.count({ where }),
+    prisma.twoFactorRecoveryCode.count({ where: { ...where, NOT: { usedAt: null } } }),
+  ]);
+
+  return {
+    total,
+    used,
+    remaining: Math.max(0, total - used),
+  };
+};
+
+const createTwoFactorChallenge = async ({ userId, purpose, meta = {}, code = null, metadata = {} }) => {
+  const challengeCode = code || generateSixDigitCode();
+  const codeHash = await bcrypt.hash(challengeCode, 10);
   const expiresAt = new Date(Date.now() + TWO_FACTOR_CODE_EXPIRY_MINUTES * 60 * 1000);
 
   const challenge = await prisma.twoFactorChallenge.create({
@@ -172,17 +252,18 @@ const createTwoFactorChallenge = async ({ userId, purpose, meta = {} }) => {
       deviceType: meta.deviceType || 'Unknown',
       metadata: {
         location: meta.location || null,
+        ...metadata,
       },
     },
   });
 
   return {
     challenge,
-    code,
+    code: challengeCode,
   };
 };
 
-const verifyTwoFactorChallenge = async ({ challengeId, code, purpose, expectedUserId = null }) => {
+const getActiveTwoFactorChallenge = async ({ challengeId, purpose, expectedUserId = null }) => {
   const challenge = await prisma.twoFactorChallenge.findUnique({
     where: { id: challengeId },
   });
@@ -211,20 +292,38 @@ const verifyTwoFactorChallenge = async ({ challengeId, code, purpose, expectedUs
     throw new ApiError(429, 'Too many invalid attempts for this two-factor challenge');
   }
 
+  return challenge;
+};
+
+const markTwoFactorAttemptFailed = async (challenge) => {
+  await prisma.twoFactorChallenge.update({
+    where: { id: challenge.id },
+    data: { attempts: challenge.attempts + 1 },
+  });
+};
+
+const markTwoFactorChallengeUsed = async (challengeId) => {
+  return prisma.twoFactorChallenge.update({
+    where: { id: challengeId },
+    data: { usedAt: new Date() },
+  });
+};
+
+const verifyTwoFactorChallenge = async ({ challengeId, code, purpose, expectedUserId = null }) => {
+  const challenge = await getActiveTwoFactorChallenge({
+    challengeId,
+    purpose,
+    expectedUserId,
+  });
+
   const valid = await bcrypt.compare(String(code || '').trim(), challenge.codeHash);
 
   if (!valid) {
-    await prisma.twoFactorChallenge.update({
-      where: { id: challenge.id },
-      data: { attempts: challenge.attempts + 1 },
-    });
+    await markTwoFactorAttemptFailed(challenge);
     throw new ApiError(401, 'Invalid two-factor code');
   }
 
-  const updated = await prisma.twoFactorChallenge.update({
-    where: { id: challenge.id },
-    data: { usedAt: new Date() },
-  });
+  const updated = await markTwoFactorChallengeUsed(challenge.id);
 
   return updated;
 };
@@ -352,18 +451,15 @@ const login = async (
   };
 
   if (user.twoFactorEnabled) {
-    const { challenge, code } = await createTwoFactorChallenge({
+    if (!user.twoFactorSecret) {
+      throw new ApiError(503, 'Two-factor is enabled but authenticator secret is missing. Reconfigure 2FA.');
+    }
+
+    const { challenge } = await createTwoFactorChallenge({
       userId: user.id,
       purpose: 'login',
       meta: combinedMeta,
-    });
-
-    const delivery = await deliverTwoFactorCode({
-      user,
-      code,
-      challenge,
-      purpose: 'login',
-      meta: combinedMeta,
+      metadata: { method: 'totp' },
     });
 
     await logAuditEvent({
@@ -376,7 +472,7 @@ const login = async (
       metadata: {
         challengeId: challenge.id,
         expiresAt: challenge.expiresAt,
-        deliveryChannel: delivery.channel,
+        deliveryChannel: 'authenticator_app',
         browser: combinedMeta.browser,
         os: combinedMeta.os,
         deviceType: combinedMeta.deviceType,
@@ -390,9 +486,8 @@ const login = async (
         challengeId: challenge.id,
         expiresAt: challenge.expiresAt,
         purpose: challenge.purpose,
-        deliveryChannel: delivery.channel,
+        deliveryChannel: 'authenticator_app',
       },
-      ...(delivery.debugCode ? { debugCode: delivery.debugCode } : {}),
     };
   }
 
@@ -421,9 +516,8 @@ const login = async (
 };
 
 const verifyLoginTwoFactor = async ({ challengeId, code }, { meta = {} } = {}) => {
-  const challenge = await verifyTwoFactorChallenge({
+  const challenge = await getActiveTwoFactorChallenge({
     challengeId,
-    code,
     purpose: 'login',
   });
 
@@ -432,6 +526,28 @@ const verifyLoginTwoFactor = async ({ challengeId, code }, { meta = {} } = {}) =
   if (!user || !user.isActive) {
     throw new ApiError(401, 'User account is not active');
   }
+
+  if (!user.twoFactorSecret) {
+    throw new ApiError(503, 'Authenticator is not configured for this account');
+  }
+
+  const isValidTotp = speakeasy.totp.verify({
+    secret: user.twoFactorSecret,
+    encoding: 'base32',
+    token: String(code || '').trim(),
+    window: 1,
+  });
+
+  let usedRecoveryCode = false;
+  if (!isValidTotp) {
+    usedRecoveryCode = await tryUseRecoveryCode({ userId: user.id, code });
+    if (!usedRecoveryCode) {
+      await markTwoFactorAttemptFailed(challenge);
+      throw new ApiError(401, 'Invalid two-factor code');
+    }
+  }
+
+  await markTwoFactorChallengeUsed(challenge.id);
 
   const challengeLocation = challenge.metadata?.location || null;
   const combinedMeta = {
@@ -448,7 +564,7 @@ const verifyLoginTwoFactor = async ({ challengeId, code }, { meta = {} } = {}) =
 
   await logAuditEvent({
     actorId: user.id,
-    action: 'auth.login.2fa_verified',
+    action: usedRecoveryCode ? 'auth.login.2fa_verified_with_recovery_code' : 'auth.login.2fa_verified',
     targetType: 'user',
     targetId: user.id,
     ipAddress: combinedMeta.ip || null,
@@ -479,19 +595,25 @@ const startEnableTwoFactor = async ({ userId }, { meta = {} } = {}) => {
     throw new ApiError(409, 'Two-factor authentication is already enabled');
   }
 
-  const { challenge, code } = await createTwoFactorChallenge({
+  const serviceLabel = `${TWO_FACTOR_ISSUER} (${user.email})`;
+  const secret = speakeasy.generateSecret({
+    name: serviceLabel,
+    issuer: TWO_FACTOR_ISSUER,
+    length: 32,
+  });
+
+  const { challenge } = await createTwoFactorChallenge({
     userId: user.id,
     purpose: 'enable',
     meta,
+    metadata: {
+      method: 'totp',
+      setupSecret: secret.base32,
+      otpauthUrl: secret.otpauth_url,
+    },
   });
 
-  const delivery = await deliverTwoFactorCode({
-    user,
-    code,
-    challenge,
-    purpose: 'enable',
-    meta,
-  });
+  const qrImageDataUrl = await QRCode.toDataURL(secret.otpauth_url);
 
   await logAuditEvent({
     actorId: user.id,
@@ -503,33 +625,93 @@ const startEnableTwoFactor = async ({ userId }, { meta = {} } = {}) => {
     metadata: {
       challengeId: challenge.id,
       expiresAt: challenge.expiresAt,
-      deliveryChannel: delivery.channel,
+      deliveryChannel: 'authenticator_app',
     },
   });
 
   return {
     challengeId: challenge.id,
     expiresAt: challenge.expiresAt,
-    deliveryChannel: delivery.channel,
-    ...(delivery.debugCode ? { debugCode: delivery.debugCode } : {}),
+    deliveryChannel: 'authenticator_app',
+    qrImageDataUrl,
+    manualEntryKey: secret.base32,
+    otpAuthUrl: secret.otpauth_url,
   };
 };
 
 const verifyEnableTwoFactor = async ({ userId, challengeId, code }, { meta = {} } = {}) => {
-  const challenge = await verifyTwoFactorChallenge({
+  const existingChallenge = await prisma.twoFactorChallenge.findUnique({
+    where: { id: challengeId },
+  });
+
+  if (!existingChallenge) {
+    throw new ApiError(404, 'Two-factor challenge not found');
+  }
+
+  if (existingChallenge.purpose !== 'enable') {
+    throw new ApiError(400, 'Invalid two-factor challenge purpose');
+  }
+
+  if (existingChallenge.userId !== String(userId)) {
+    throw new ApiError(403, 'Two-factor challenge does not belong to this user');
+  }
+
+  if (existingChallenge.usedAt) {
+    const alreadyEnabledUser = await prisma.user.findUnique({
+      where: { id: existingChallenge.userId },
+    });
+
+    if (alreadyEnabledUser?.twoFactorEnabled) {
+      const recoveryStatus = await getRecoveryStatus(alreadyEnabledUser.id);
+      const recoveryCodes =
+        recoveryStatus.total === 0
+          ? await replaceRecoveryCodesForUser(alreadyEnabledUser.id)
+          : [];
+
+      return {
+        user: sanitizeUser(alreadyEnabledUser),
+        recoveryCodes,
+      };
+    }
+
+    throw new ApiError(400, 'Two-factor challenge is already used');
+  }
+
+  const challenge = await getActiveTwoFactorChallenge({
     challengeId,
-    code,
     purpose: 'enable',
     expectedUserId: userId,
   });
+
+  const setupSecret = challenge.metadata?.setupSecret;
+  if (!setupSecret) {
+    throw new ApiError(400, 'Authenticator setup challenge is invalid. Start setup again.');
+  }
+
+  const isValidTotp = speakeasy.totp.verify({
+    secret: setupSecret,
+    encoding: 'base32',
+    token: String(code || '').trim(),
+    window: 1,
+  });
+
+  if (!isValidTotp) {
+    await markTwoFactorAttemptFailed(challenge);
+    throw new ApiError(401, 'Invalid two-factor code');
+  }
+
+  await markTwoFactorChallengeUsed(challenge.id);
 
   const user = await prisma.user.update({
     where: { id: challenge.userId },
     data: {
       twoFactorEnabled: true,
       twoFactorEnabledAt: new Date(),
+      twoFactorSecret: setupSecret,
     },
   });
+
+  const recoveryCodes = await replaceRecoveryCodesForUser(user.id);
 
   await logAuditEvent({
     actorId: user.id,
@@ -540,10 +722,13 @@ const verifyEnableTwoFactor = async ({ userId, challengeId, code }, { meta = {} 
     userAgent: meta.userAgent || null,
   });
 
-  return sanitizeUser(user);
+  return {
+    user: sanitizeUser(user),
+    recoveryCodes,
+  };
 };
 
-const disableTwoFactor = async ({ userId, currentPassword }, { meta = {} } = {}) => {
+const disableTwoFactor = async ({ userId, code }, { meta = {} } = {}) => {
   const user = await prisma.user.findUnique({ where: { id: String(userId) } });
 
   if (!user) {
@@ -554,9 +739,19 @@ const disableTwoFactor = async ({ userId, currentPassword }, { meta = {} } = {})
     throw new ApiError(400, 'Two-factor authentication is already disabled');
   }
 
-  const isPasswordValid = await bcrypt.compare(String(currentPassword || ''), user.password);
-  if (!isPasswordValid) {
-    throw new ApiError(401, 'Current password is incorrect');
+  if (!user.twoFactorSecret) {
+    throw new ApiError(503, 'Authenticator is not configured for this account');
+  }
+
+  const isValidTotp = speakeasy.totp.verify({
+    secret: user.twoFactorSecret,
+    encoding: 'base32',
+    token: String(code || '').trim(),
+    window: 1,
+  });
+
+  if (!isValidTotp) {
+    throw new ApiError(401, 'Invalid authenticator code');
   }
 
   const updated = await prisma.user.update({
@@ -564,7 +759,12 @@ const disableTwoFactor = async ({ userId, currentPassword }, { meta = {} } = {})
     data: {
       twoFactorEnabled: false,
       twoFactorEnabledAt: null,
+      twoFactorSecret: null,
     },
+  });
+
+  await prisma.twoFactorRecoveryCode.deleteMany({
+    where: { userId: user.id },
   });
 
   await prisma.twoFactorChallenge.updateMany({
@@ -588,6 +788,49 @@ const disableTwoFactor = async ({ userId, currentPassword }, { meta = {} } = {})
   });
 
   return sanitizeUser(updated);
+};
+
+const regenerateRecoveryCodes = async ({ userId, currentPassword }, { meta = {} } = {}) => {
+  const user = await prisma.user.findUnique({ where: { id: String(userId) } });
+
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+    throw new ApiError(400, 'Enable two-factor authentication before generating recovery codes');
+  }
+
+  const isPasswordValid = await bcrypt.compare(String(currentPassword || ''), user.password);
+  if (!isPasswordValid) {
+    throw new ApiError(401, 'Current password is incorrect');
+  }
+
+  const recoveryCodes = await replaceRecoveryCodesForUser(user.id);
+
+  await logAuditEvent({
+    actorId: user.id,
+    action: 'auth.2fa.recovery_codes_regenerated',
+    targetType: 'user',
+    targetId: user.id,
+    ipAddress: meta.ip || null,
+    userAgent: meta.userAgent || null,
+  });
+
+  return {
+    recoveryCodes,
+    status: await getRecoveryStatus(user.id),
+  };
+};
+
+const getRecoveryCodeStatus = async ({ userId }) => {
+  const user = await prisma.user.findUnique({ where: { id: String(userId) } });
+
+  if (!user) {
+    throw new ApiError(404, 'User not found');
+  }
+
+  return getRecoveryStatus(user.id);
 };
 
 const refreshToken = async (token, meta = {}) => {
@@ -808,6 +1051,8 @@ module.exports = {
   startEnableTwoFactor,
   verifyEnableTwoFactor,
   disableTwoFactor,
+  regenerateRecoveryCodes,
+  getRecoveryCodeStatus,
   refreshToken,
   logout,
   listUserSessions,

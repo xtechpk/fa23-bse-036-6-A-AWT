@@ -90,8 +90,18 @@ const hydrateUsersWithAvatars = async (users = []) => {
 const hydrateAssignedGroups = async (user) => {
   const safe = sanitizeUser(user);
 
-  const [avatarAssets, memberships] = await Promise.all([
+  const [avatarAssets, fallbackAssets, memberships] = await Promise.all([
     safe.avatarFileId ? getFileAssetsByIds([safe.avatarFileId]) : Promise.resolve([]),
+    prisma.fileAsset.findMany({
+      where: {
+        attachedToType: FILE_ATTACHMENT_TYPES.USER_AVATAR,
+        attachedToId: safe.id,
+        category: FILE_CATEGORIES.AVATAR,
+        isTemporary: false,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 1,
+    }),
     prisma.groupMember.findMany({
       where: { userId: safe.id },
       select: {
@@ -103,7 +113,16 @@ const hydrateAssignedGroups = async (user) => {
     }),
   ]);
 
-  const avatarFile = avatarAssets[0] || null;
+  const fallbackAvatar = fallbackAssets[0]
+    ? {
+        ...fallbackAssets[0],
+        _id: fallbackAssets[0].id,
+        url: fallbackAssets[0].publicUrl,
+        path: fallbackAssets[0].relativePath,
+        fileName: fallbackAssets[0].originalName,
+      }
+    : null;
+  const avatarFile = avatarAssets[0] || fallbackAvatar || null;
 
   return {
     ...safe,

@@ -73,6 +73,14 @@ const deleteMessageValidator = [
     .withMessage('deleteFor must be me or everyone'),
 ];
 
+const deletePrivateConversationValidator = [
+  param('userId').custom(isUuid).withMessage('Invalid user ID'),
+];
+
+const deleteGroupConversationValidator = [
+  param('groupId').custom(isUuid).withMessage('Invalid group ID'),
+];
+
 module.exports = {
   privateMessageValidator,
   groupMessageValidator,
@@ -82,4 +90,6 @@ module.exports = {
   markReadValidator,
   editMessageValidator,
   deleteMessageValidator,
+  deletePrivateConversationValidator,
+  deleteGroupConversationValidator,
 };

@@ -16,6 +16,7 @@ const {
   twoFactorEnableStartValidator,
   twoFactorEnableVerifyValidator,
   twoFactorDisableValidator,
+  twoFactorRecoveryRegenerateValidator,
   sessionIdParamValidator,
 } = require('../validators/authValidator');
 
@@ -73,6 +74,15 @@ router.post(
   twoFactorDisableValidator,
   validate,
   authController.disableTwoFactor
+);
+router.get('/2fa/recovery-codes/status', protect, authController.getRecoveryCodeStatus);
+router.post(
+  '/2fa/recovery-codes/regenerate',
+  protect,
+  twoFactorLimiter,
+  twoFactorRecoveryRegenerateValidator,
+  validate,
+  authController.regenerateRecoveryCodes
 );
 router.get(
   '/sessions',
