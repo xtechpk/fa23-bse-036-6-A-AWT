@@ -26,6 +26,46 @@ The system supports private and group messaging, cross-group permission workflow
 - Admin tools: blocked IPs, audit logs, session control
 - Modular backend architecture and typed frontend client
 
+## Chat screenshots
+
+The screenshots below are sourced from `frontend/public` and include chat module views only.
+
+### Conversations panel
+
+Shows the left-side conversation list, unread indicators, and active conversation area.
+
+![Conversations panel](frontend/public/conversations.png)
+
+### Start conversation flow
+
+Displays the user picker modal used to start a new private conversation.
+
+![Start conversation modal](frontend/public/createconvo.png)
+
+### Text messaging
+
+Demonstrates a successful text message send with message actions.
+
+![Text messaging](frontend/public/messages.png)
+
+### Media or document message in chat
+
+Shows a chat message containing uploaded media/document content.
+
+![Media or document message](frontend/public/documenstmessage.png)
+
+### Reply view (receiver side)
+
+Shows how replies and message flow appear from the other participant perspective.
+
+![Reply view receiver side](frontend/public/document%20replies%20on%20anothersides.jpeg)
+
+### Reply view (sender side)
+
+Shows the corresponding sender-side message layout in the same conversation.
+
+![Reply view sender side](frontend/public/respliesin%20another%20side.jpeg)
+
 ## Architecture
 
 ```text
