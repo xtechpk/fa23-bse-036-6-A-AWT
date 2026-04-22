@@ -30,6 +30,8 @@ The system supports private and group messaging, cross-group permission workflow
 ## URL https://eyada360.com/
 ## SuperAdmin    Email: yesalihassan@gmail.com      Password: yesalihassan@gmail.com
 ## Admin    Email: alihassan8130030@gmail.com      Password:  Al!h@ss@n123
+## RECEPTIONIST    Email: alihassan81300300@gmail.com      Password:  Al!h@ss@n123
+
 
 
 ## Chat screenshots
