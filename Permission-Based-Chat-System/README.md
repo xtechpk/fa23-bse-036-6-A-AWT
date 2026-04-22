@@ -25,7 +25,13 @@ The system supports private and group messaging, cross-group permission workflow
 - Attachment and avatar uploads with persisted file metadata
 - Admin tools: blocked IPs, audit logs, session control
 - Modular backend architecture and typed frontend client
+
+  
 ## URL https://eyada360.com/
+## SuperAdmin    Email: yesalihassan@gmail.com      Password: yesalihassan@gmail.com
+## Admin    Email: alihassan8130030@gmail.com      Password:  Al!h@ss@n123
+
+
 ## Chat screenshots
 
 The screenshots below are sourced from `frontend/public` and include chat module views only.
