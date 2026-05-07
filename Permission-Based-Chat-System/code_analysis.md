@@ -56,6 +56,19 @@ flowchart LR
   redis[redis] --> cleanup
 ```
 
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 2 |
+| Path P1 | Imported as a module, so server startup is skipped. |
+| Path P2 | Run as the main entrypoint, so DB connect, Redis connect, HTTP listen, and shutdown handlers are activated. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-APP-01 | Import the module from a test file. | `startServer` is not invoked automatically. |
+| TC-APP-02 | Execute the file directly. | The server bootstraps and the health route responds. |
+
 ## 2) `src/middlewares/authMiddleware.js`
 
 **Role**: authentication guard that extracts a token, verifies the session, loads the user, and attaches `req.user` and `req.session`.
@@ -108,6 +121,23 @@ flowchart LR
   userActive[user.isActive] --> authz
 ```
 
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 4 |
+| Path P1 | No token is present, so the request fails with 401. |
+| Path P2 | Token exists but no session ID is embedded, so the request fails with 401. |
+| Path P3 | Session is found but is invalid, expired, blocked, or revoked, so the request fails. |
+| Path P4 | Session is valid and the user is active, so `req.user` and `req.session` are attached and `next()` runs. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-AUTHMW-01 | Send a request without an authorization token. | 401 response. |
+| TC-AUTHMW-02 | Send a request with a malformed token. | 401 response. |
+| TC-AUTHMW-03 | Send a request with an expired or revoked session. | 401 or 403 depending on the session state. |
+| TC-AUTHMW-04 | Send a request with a valid token and active user. | Middleware calls `next()`. |
+
 ## 3) `src/controllers/authController.js`
 
 **Role**: HTTP layer for login, registration, token refresh, logout, and two-factor actions.
@@ -141,6 +171,19 @@ flowchart LR
   resultFlag[authService result.requiresTwoFactor] --> message[response message]
   service --> response[response data]
 ```
+
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 2 |
+| Path P1 | Login succeeds without two-factor, so the controller returns tokens. |
+| Path P2 | Login requires two-factor, so the controller returns a challenge response. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-AUTHC-01 | Log in with a user that does not have two-factor enabled. | Success payload contains access and refresh tokens. |
+| TC-AUTHC-02 | Log in with a user that has two-factor enabled. | Response indicates verification is required. |
 
 ## 4) `src/services/authService.js`
 
@@ -201,6 +244,27 @@ flowchart LR
   meta[meta.location / meta.ip / meta.userAgent] --> audit[audit and session metadata]
 ```
 
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 6 |
+| Path P1 | The user is not found, so the service returns 401. |
+| Path P2 | The password is invalid, so the service returns 401. |
+| Path P3 | `adminOnly` is true and the user is not an admin or superadmin, so the service returns 403. |
+| Path P4 | The account is inactive, so the service returns 403. |
+| Path P5 | The user has two-factor enabled, so the service creates a challenge and returns a 2FA flow response. |
+| Path P6 | The user passes every check and the service returns tokens and session data. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-AUTHS-01 | Attempt login with an unknown email. | 401 response. |
+| TC-AUTHS-02 | Attempt login with the wrong password. | 401 response. |
+| TC-AUTHS-03 | Attempt admin login with a normal user. | 403 response. |
+| TC-AUTHS-04 | Attempt login with an inactive account. | 403 response. |
+| TC-AUTHS-05 | Attempt login with a two-factor enabled account. | Challenge response. |
+| TC-AUTHS-06 | Attempt login with a valid active account. | Tokens plus a session ID are returned. |
+
 ## 5) `src/controllers/messageController.js`
 
 **Role**: HTTP endpoints for sending, browsing, editing, deleting, and uploading message attachments.
@@ -230,6 +294,17 @@ flowchart LR
   content[req.body.content] --> call
   call --> response[response data]
 ```
+
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 1 |
+| Path P1 | The controller resolves attachments, calls the service, and returns a success response. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-MSGC-01 | Send a valid private message request. | Controller returns a 201 response with the created message payload. |
 
 ## 6) `src/services/messageService.js`
 
@@ -289,6 +364,27 @@ flowchart LR
   messageStatus[message.status] --> tick[tick/status payload]
 ```
 
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 6 |
+| Path P1 | The sender tries to message themselves, so the service rejects the request. |
+| Path P2 | The content and attachments are both empty, so the service rejects the request. |
+| Path P3 | The users are not allowed to chat privately and have no prior thread, so the service rejects the request. |
+| Path P4 | The request passes validation and the receiver is online, so the message is stored as delivered. |
+| Path P5 | The request passes validation and the receiver is offline, so the message is stored as sent. |
+| Path P6 | The message passes validation but reply or attachment checks fail inside the transaction, so the service rejects the request. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-MSGS-01 | Send a message to the same user. | 400 response. |
+| TC-MSGS-02 | Send an empty message with no attachments. | 400 response. |
+| TC-MSGS-03 | Send a private message across groups without permission and without prior history. | 403 response. |
+| TC-MSGS-04 | Send a valid message while the receiver is online. | Stored status is delivered. |
+| TC-MSGS-05 | Send a valid message while the receiver is offline. | Stored status is sent. |
+| TC-MSGS-06 | Send a message with an invalid reply target or unauthorized attachment. | Validation error. |
+
 ## 7) `src/controllers/groupController.js`
 
 **Role**: group lifecycle, membership management, ownership transfer, and avatar enrichment.
@@ -325,6 +421,17 @@ flowchart LR
   enrich --> payload[ApiResponse payload]
 ```
 
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 1 |
+| Path P1 | Group creation succeeds, membership is created, avatars are enriched, and the response is returned. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-GROUP-01 | Create a group with valid input. | Owner membership exists and the response contains the new group. |
+
 ## 8) `src/controllers/notificationController.js`
 
 **Role**: list, read, bulk update, and delete notifications.
@@ -358,112 +465,19 @@ flowchart LR
   meta --> response
 ```
 
+**Jira-style analysis**
+
+| Item | Details |
+| --- | --- |
+| Cyclomatic complexity | 1 |
+| Path P1 | Notifications are fetched with pagination and returned. |
+
+| Test case ID | Scenario | Expected result |
+| --- | --- | --- |
+| TC-NOTIF-01 | Request notifications with valid pagination parameters. | Response includes items and pagination metadata. |
+
 ## Notes
 
 - The intermediate code is written as simplified three-address style pseudocode, not compiler output.
 - The flow graph is a compact control-flow sketch; the DD graph shows primary data dependencies only.
 - If you want, this can be expanded into Mermaid diagrams or a PDF-ready report next.
-
-## Cyclomatic Complexity, Independent Paths, and Test Cases
-
-The values below are based on the control-flow sketches used in this report. For wrapper-style controller modules, the complexity is intentionally low because the branching happens in the service layer.
-
-### 1) `src/app.js`
-
-- Cyclomatic complexity: 2
-- Independent paths:
-  - P1: imported as a module, so server startup is skipped.
-  - P2: run as the main entrypoint, so DB connect, Redis connect, HTTP listen, and shutdown handlers are activated.
-- Test cases:
-  - Import the module from a test file and verify that `startServer` is not invoked automatically.
-  - Execute the file directly and verify that the server bootstraps and the health route responds.
-
-### 2) `src/middlewares/authMiddleware.js`
-
-- Cyclomatic complexity: 4
-- Independent paths:
-  - P1: no token is present, so the request fails with 401.
-  - P2: token exists but no session ID is embedded, so the request fails with 401.
-  - P3: session is found but is invalid, expired, blocked, or revoked, so the request fails.
-  - P4: session is valid and the user is active, so `req.user` and `req.session` are attached and `next()` runs.
-- Test cases:
-  - Send a request without an authorization token and expect 401.
-  - Send a request with a malformed token and expect 401.
-  - Send a request with an expired or revoked session and expect 401 or 403 depending on the session state.
-  - Send a request with a valid token and active user and expect the middleware to call `next()`.
-
-### 3) `src/controllers/authController.js`
-
-- Cyclomatic complexity: 2
-- Independent paths:
-  - P1: login succeeds without two-factor, so the controller returns tokens.
-  - P2: login requires two-factor, so the controller returns a challenge response.
-- Test cases:
-  - Log in with a user that does not have two-factor enabled and verify the success payload contains access and refresh tokens.
-  - Log in with a user that has two-factor enabled and verify the response indicates that verification is required.
-
-### 4) `src/services/authService.js`
-
-- Cyclomatic complexity: 6
-- Independent paths:
-  - P1: the user is not found, so the service returns 401.
-  - P2: the password is invalid, so the service returns 401.
-  - P3: `adminOnly` is true and the user is not an admin or superadmin, so the service returns 403.
-  - P4: the account is inactive, so the service returns 403.
-  - P5: the user has two-factor enabled, so the service creates a challenge and returns a 2FA flow response.
-  - P6: the user passes every check and the service returns tokens and session data.
-- Test cases:
-  - Attempt login with an unknown email and expect 401.
-  - Attempt login with the wrong password and expect 401.
-  - Attempt admin login with a normal user and expect 403.
-  - Attempt login with an inactive account and expect 403.
-  - Attempt login with a two-factor enabled account and expect a challenge response.
-  - Attempt login with a valid active account and expect tokens plus a session ID.
-
-### 5) `src/controllers/messageController.js`
-
-- Cyclomatic complexity: 1
-- Independent paths:
-  - P1: the controller resolves attachments, calls the service, and returns a success response.
-- Test cases:
-  - Send a valid private message request and verify the controller returns a 201 response with the created message payload.
-
-### 6) `src/services/messageService.js`
-
-- Cyclomatic complexity: 6
-- Independent paths:
-  - P1: the sender tries to message themselves, so the service rejects the request.
-  - P2: the content and attachments are both empty, so the service rejects the request.
-  - P3: the users are not allowed to chat privately and have no prior thread, so the service rejects the request.
-  - P4: the request passes validation and the receiver is online, so the message is stored as delivered.
-  - P5: the request passes validation and the receiver is offline, so the message is stored as sent.
-  - P6: the message passes validation but reply or attachment checks fail inside the transaction, so the service rejects the request.
-- Test cases:
-  - Send a message to the same user and expect 400.
-  - Send an empty message with no attachments and expect 400.
-  - Send a private message across groups without permission and without prior history and expect 403.
-  - Send a valid message while the receiver is online and verify the stored status is delivered.
-  - Send a valid message while the receiver is offline and verify the stored status is sent.
-  - Send a message with an invalid reply target or unauthorized attachment and expect a validation error.
-
-### 7) `src/controllers/groupController.js`
-
-- Cyclomatic complexity: 1
-- Independent paths:
-  - P1: group creation succeeds, membership is created, avatars are enriched, and the response is returned.
-- Test cases:
-  - Create a group with valid input and verify the owner membership exists and the response contains the new group.
-
-### 8) `src/controllers/notificationController.js`
-
-- Cyclomatic complexity: 1
-- Independent paths:
-  - P1: notifications are fetched with pagination and returned.
-- Test cases:
-  - Request notifications with valid pagination parameters and verify the response includes items and pagination metadata.
-
-### Short Summary
-
-- Highest branching module in this report: `src/services/authService.js` and `src/services/messageService.js`.
-- Lowest branching modules in this report: the controller wrappers that simply call the service layer.
-- If you want a stricter compiler-style path enumeration, I can expand the two service files into full path-by-path tables next.
