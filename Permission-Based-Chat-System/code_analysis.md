@@ -29,30 +29,31 @@ end
 ```
 
 **Flow graph**
-```text
-N1 start
-N2 load configuration
-N3 create app and install middleware
-N4 register routes
-N5 if main module?
-N6 connect DB / Redis
-N7 create HTTP + Socket servers
-N8 listen
-N9 shutdown handlers
-
-Edges:
-N1 -> N2 -> N3 -> N4 -> N5
-N5(yes) -> N6 -> N7 -> N8 -> N9 -> end
-N5(no) -> end
+```mermaid
+flowchart TD
+  A([start]) --> B[load configuration]
+  B --> C[create app and install middleware]
+  C --> D[register routes]
+  D --> E{if main module?}
+  E -- yes --> F[connect DB / Redis]
+  F --> G[create HTTP + Socket servers]
+  G --> H[listen]
+  H --> I[shutdown handlers]
+  E -- no --> J([end])
+  I --> J
 ```
 
 **DD graph**
-```text
-env.port, env.nodeEnv -> listen, logger
-env.corsOrigins -> cors middleware
-httpServer -> ioServer -> gracefulShutdown
-prisma, redis -> gracefulShutdown cleanup
-routes -> app.mount
+```mermaid
+flowchart LR
+  envPort[env.port] --> listen[listen]
+  envNodeEnv[env.nodeEnv] --> logger[logger]
+  envCors[env.corsOrigins] --> cors[cors middleware]
+  routes[routes] --> mount[app.mount]
+  httpServer[httpServer] --> ioServer[ioServer]
+  ioServer --> graceful[gracefulShutdown]
+  prisma[prisma] --> cleanup[gracefulShutdown cleanup]
+  redis[redis] --> cleanup
 ```
 
 ## 2) `src/middlewares/authMiddleware.js`
@@ -76,37 +77,35 @@ next()
 ```
 
 **Flow graph**
-```text
-N1 start
-N2 extract token
-N3 token exists?
-N4 verify token
-N5 sessionId exists?
-N6 fetch session and user
-N7 session valid and active?
-N8 update heartbeat if needed
-N9 attach request context
-N10 next / error
-
-Edges:
-N1 -> N2 -> N3
-N3(no) -> N10
-N3(yes) -> N4 -> N5
-N5(no) -> N10
-N5(yes) -> N6 -> N7
-N7(no) -> N10
-N7(yes) -> N8 -> N9 -> N10
+```mermaid
+flowchart TD
+  A([start]) --> B[extract token]
+  B --> C{token exists?}
+  C -- no --> Z([error / next])
+  C -- yes --> D[verify token]
+  D --> E{sessionId exists?}
+  E -- no --> Z
+  E -- yes --> F[fetch session and user]
+  F --> G{session valid and active?}
+  G -- no --> Z
+  G -- yes --> H[update heartbeat if needed]
+  H --> I[attach request context]
+  I --> J([next])
 ```
 
 **DD graph**
-```text
-req.headers.authorization, req.cookies.accessToken -> token
-token -> decoded.sessionId, decoded.userId
-decoded.sessionId -> prisma.loginSession lookup -> session
-session.user -> req.user
-session -> req.session
-session.lastSeenAt -> heartbeat update decision
-user.role, user.isActive -> authorization decision
+```mermaid
+flowchart LR
+  authHeader[req.headers.authorization] --> token[token]
+  cookie[req.cookies.accessToken] --> token
+  token --> decoded[decoded.sessionId / decoded.userId]
+  decoded --> sessionLookup[prisma.loginSession lookup]
+  sessionLookup --> session[session]
+  session --> reqUser[req.user]
+  session --> reqSession[req.session]
+  sessionLastSeen[session.lastSeenAt] --> heartbeat[heartbeat update decision]
+  userRole[user.role] --> authz[authorization decision]
+  userActive[user.isActive] --> authz
 ```
 
 ## 3) `src/controllers/authController.js`
@@ -125,24 +124,22 @@ login(req)
 ```
 
 **Flow graph**
-```text
-N1 receive request
-N2 call authService
-N3 requiresTwoFactor?
-N4 choose response message
-N5 send success payload
-
-Edges:
-N1 -> N2 -> N3
-N3(yes) -> N4 -> N5
-N3(no) -> N4 -> N5
+```mermaid
+flowchart TD
+  A([request]) --> B[call authService]
+  B --> C{requiresTwoFactor?}
+  C -- yes --> D[choose 2FA message]
+  C -- no --> E[choose success message]
+  D --> F[send success payload]
+  E --> F
 ```
 
 **DD graph**
-```text
-req.body -> authService.login
-authService result.requiresTwoFactor -> response message
-authService result -> response data
+```mermaid
+flowchart LR
+  body[req.body] --> service[authService.login]
+  resultFlag[authService result.requiresTwoFactor] --> message[response message]
+  service --> response[response data]
 ```
 
 ## 4) `src/services/authService.js`
@@ -170,42 +167,38 @@ login(email, password, adminOnly, meta)
 ```
 
 **Flow graph**
-```text
-N1 start
-N2 normalize credentials
-N3 user found?
-N4 password valid?
-N5 role allowed for adminOnly?
-N6 account active?
-N7 two-factor enabled?
-N8 create challenge / return 2FA branch
-N9 build session tokens
-N10 persist session and refresh token
-N11 return result
-
-Edges:
-N1 -> N2 -> N3
-N3(no) -> error
-N3(yes) -> N4
-N4(no) -> error
-N4(yes) -> N5
-N5(no) -> error
-N5(yes) -> N6
-N6(no) -> error
-N6(yes) -> N7
-N7(yes) -> N8 -> N11
-N7(no) -> N9 -> N10 -> N11
+```mermaid
+flowchart TD
+  A([start]) --> B[normalize credentials]
+  B --> C{user found?}
+  C -- no --> X1[error]
+  C -- yes --> D{password valid?}
+  D -- no --> X1
+  D -- yes --> E{role allowed for adminOnly?}
+  E -- no --> X2[error]
+  E -- yes --> F{account active?}
+  F -- no --> X3[error]
+  F -- yes --> G{two-factor enabled?}
+  G -- yes --> H[create challenge / return 2FA]
+  G -- no --> I[build session tokens]
+  I --> J[persist session and refresh token]
+  J --> K([return result])
+  H --> K
 ```
 
 **DD graph**
-```text
-email, password -> normalizedEmail, isPasswordValid
-user.role, adminOnly -> access decision
-user.isActive -> active account decision
-user.twoFactorEnabled -> challenge branch
-user.id, user.role -> token payload
-sessionId -> refresh token and login session linkage
-meta.location, meta.ip, meta.userAgent -> audit and session metadata
+```mermaid
+flowchart LR
+  email[email] --> normalized[normalizedEmail]
+  password[password] --> valid[isPasswordValid]
+  role[user.role] --> access[access decision]
+  adminOnly[adminOnly] --> access
+  active[user.isActive] --> activeDecision[active account decision]
+  twoFactor[user.twoFactorEnabled] --> challenge[challenge branch]
+  userId[user.id] --> payload[token payload]
+  userRole[user.role] --> payload
+  sessionId[sessionId] --> linkage[refresh token and login session linkage]
+  meta[meta.location / meta.ip / meta.userAgent] --> audit[audit and session metadata]
 ```
 
 ## 5) `src/controllers/messageController.js`
@@ -221,21 +214,21 @@ sendPrivateMessage(req)
 ```
 
 **Flow graph**
-```text
-N1 request arrives
-N2 resolve attachments
-N3 call message service
-N4 response ready
-
-Edges:
-N1 -> N2 -> N3 -> N4
+```mermaid
+flowchart TD
+  A([request arrives]) --> B[resolve attachments]
+  B --> C[call message service]
+  C --> D([response ready])
 ```
 
 **DD graph**
-```text
-req.body.attachmentIds / req.body.attachments -> attachmentIds
-req.user._id, req.body.receiverId, req.body.content -> service call
-service result -> response data
+```mermaid
+flowchart LR
+  body[req.body.attachmentIds / req.body.attachments] --> ids[attachmentIds]
+  user[req.user._id] --> call[service call]
+  receiver[req.body.receiverId] --> call
+  content[req.body.content] --> call
+  call --> response[response data]
 ```
 
 ## 6) `src/services/messageService.js`
@@ -264,39 +257,36 @@ sendPrivateMessage(senderId, receiverId, content, attachmentIds, replyToId, oneT
 ```
 
 **Flow graph**
-```text
-N1 start
-N2 normalize ids and text
-N3 self message?
-N4 empty content and no attachments?
-N5 users active?
-N6 private chat allowed?
-N7 reply allowed?
-N8 create DB transaction
-N9 enrich and emit socket events
-N10 create notification
-N11 invalidate cache
-N12 return message
-
-Edges:
-N1 -> N2 -> N3
-N3(yes) -> error
-N3(no) -> N4
-N4(yes) -> error
-N4(no) -> N5 -> N6
-N6(no) -> permission error path or history fallback
-N6(yes) -> N7 -> N8 -> N9 -> N10 -> N11 -> N12
+```mermaid
+flowchart TD
+  A([start]) --> B[normalize ids and text]
+  B --> C{self message?}
+  C -- yes --> X1[error]
+  C -- no --> D{empty content and no attachments?}
+  D -- yes --> X2[error]
+  D -- no --> E[ensure both users are active]
+  E --> F{private chat allowed?}
+  F -- no --> X3[permission error / history fallback]
+  F -- yes --> G[reply allowed?]
+  G --> H[create DB transaction]
+  H --> I[enrich and emit socket events]
+  I --> J[create notification]
+  J --> K[invalidate cache]
+  K --> L([return message])
 ```
 
 **DD graph**
-```text
-senderId, receiverId -> permission checks and status selection
-content, attachmentIds -> validation and created message payload
-replyToId -> reply validation and reply reference
-normalizedAttachmentIds -> ownership verification, file attachment, message record
-message.id -> notification metadata, socket payload, cache invalidation
-sender.name -> notification title
-message.status -> tick/status payload
+```mermaid
+flowchart LR
+  sender[senderId] --> status[permission checks and status selection]
+  receiver[receiverId] --> status
+  content[content] --> validation[validation and created message payload]
+  attachments[attachmentIds] --> validation
+  reply[replyToId] --> replyCheck[reply validation and reply reference]
+  normalized[normalizedAttachmentIds] --> fileCheck[ownership verification / file attachment]
+  messageId[message.id] --> notify[notification metadata / socket payload / cache invalidation]
+  senderName[sender.name] --> title[notification title]
+  messageStatus[message.status] --> tick[tick/status payload]
 ```
 
 ## 7) `src/controllers/groupController.js`
@@ -315,24 +305,24 @@ createGroup(req)
 ```
 
 **Flow graph**
-```text
-N1 start
-N2 create group transaction
-N3 create owner membership
-N4 reload group
-N5 enrich avatars
-N6 send success response
-
-Edges:
-N1 -> N2 -> N3 -> N4 -> N5 -> N6
+```mermaid
+flowchart TD
+  A([start]) --> B[create group transaction]
+  B --> C[create owner membership]
+  C --> D[reload group]
+  D --> E[enrich avatars]
+  E --> F([send success response])
 ```
 
 **DD graph**
-```text
-req.user._id -> creatorId -> group.createdById and owner membership
-created.id -> membership.groupId and reload query
-group.avatarFileId, createdBy.avatarFileId, member avatar ids -> avatar enrichment
-enriched group -> ApiResponse payload
+```mermaid
+flowchart LR
+  user[req.user._id] --> creator[creatorId]
+  creator --> groupOwner[group.createdById]
+  creator --> membership[owner membership]
+  createdId[created.id] --> reload[reload query]
+  avatarIds[group.avatarFileId / createdBy.avatarFileId / member avatar ids] --> enrich[avatar enrichment]
+  enrich --> payload[ApiResponse payload]
 ```
 
 ## 8) `src/controllers/notificationController.js`
@@ -348,22 +338,24 @@ listNotifications(req)
 ```
 
 **Flow graph**
-```text
-N1 request arrives
-N2 parse page and limit
-N3 call notification service
-N4 format payload
-N5 send response
-
-Edges:
-N1 -> N2 -> N3 -> N4 -> N5
+```mermaid
+flowchart TD
+  A([request arrives]) --> B[parse page and limit]
+  B --> C[call notification service]
+  C --> D[format payload]
+  D --> E([send response])
 ```
 
 **DD graph**
-```text
-req.query.page, req.query.limit -> pagination options
-pagination options -> notificationService.listNotifications
-result.items, result.pagination -> response body
+```mermaid
+flowchart LR
+  page[req.query.page] --> pagination[pagination options]
+  limit[req.query.limit] --> pagination
+  pagination --> service[notificationService.listNotifications]
+  service --> items[result.items]
+  service --> meta[result.pagination]
+  items --> response[response body]
+  meta --> response
 ```
 
 ## Notes
