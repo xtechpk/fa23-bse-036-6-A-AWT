@@ -1,0 +1,126 @@
+<div class="dashboard-container">
+  <header class="dashboard-header">
+    <div class="header-content">
+      <h1>Committee Management System</h1>
+      <div class="header-actions">
+        <button
+          class="notification-btn"
+          (click)="navigateToNotifications()"
+          title="View notifications"
+        >
+          🔔
+          @if (unreadNotifications() > 0) {
+            <span class="badge">{{ unreadNotifications() }}</span>
+          }
+        </button>
+        <span class="user-name">Welcome, {{ currentUser()?.user?.user_metadata?.['full_name'] || 'User' }}</span>
+        <button
+          class="logout-btn"
+          (click)="handleLogout()"
+        >
+          Logout
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="dashboard-content">
+    <section class="committees-section">
+      <div class="section-header">
+        <h2>All Committees</h2>
+        <button
+          class="create-btn"
+          (click)="navigateToCreateCommittee()"
+        >
+          + Create Committee
+        </button>
+      </div>
+
+      @if (isLoading()) {
+        <div class="loading">Loading committees...</div>
+      } @else if (committees().length === 0) {
+        <div class="empty-state">
+          <p>No committees found. Start by creating one!</p>
+        </div>
+      } @else {
+        <div class="committees-grid">
+          @for (committee of committees(); track committee.id) {
+            <div
+              class="committee-card"
+              (click)="navigateToCommitteeDetails(committee.id)"
+            >
+              <div class="card-header">
+                <h3>{{ committee.name }}</h3>
+                <span class="status-badge" [class]="'status-' + committee.status">
+                  {{ committee.status }}
+                </span>
+              </div>
+
+              <p class="description">{{ committee.description }}</p>
+
+              <div class="committee-details">
+                <div class="detail-item">
+                  <span class="label">Monthly Amount:</span>
+                  <span class="value">{{ committee.monthly_amount | currency }}</span>
+                </div>
+                <div class="detail-item">
+                  <span class="label">Duration:</span>
+                  <span class="value">{{ committee.duration_months }} months</span>
+                </div>
+                <div class="detail-item">
+                  <span class="label">Members:</span>
+                  <span class="value">{{ committee.current_members }}/{{ committee.max_members }}</span>
+                </div>
+              </div>
+
+              <div class="creator-info">
+                <span class="label">Creator:</span>
+                <span class="creator-name">{{ committee.created_by?.full_name || 'Unknown' }}</span>
+                @if (committee.created_by?.reputation_score) {
+                  <span class="reputation">⭐ {{ committee.created_by.reputation_score }}</span>
+                }
+              </div>
+
+              <div class="card-footer">
+                <span class="created-date">{{ formatDate(committee.created_at) }}</span>
+              </div>
+            </div>
+          }
+        </div>
+      }
+    </section>
+
+    @if (userCommittees().length > 0) {
+      <section class="my-committees-section">
+        <h2>My Committees</h2>
+        <div class="committees-grid">
+          @for (committee of userCommittees(); track committee.id) {
+            <div
+              class="committee-card my-committee"
+              (click)="navigateToCommitteeDetails(committee.id)"
+            >
+              <div class="badge-owner">Creator</div>
+              <div class="card-header">
+                <h3>{{ committee.name }}</h3>
+                <span class="status-badge" [class]="'status-' + committee.status">
+                  {{ committee.status }}
+                </span>
+              </div>
+              <p class="description">{{ committee.description }}</p>
+              <div class="committee-details">
+                <div class="detail-item">
+                  <span class="label">Monthly:</span>
+                  <span class="value">{{ committee.monthly_amount | currency }}</span>
+                </div>
+                <div class="detail-item">
+                  <span class="label">Members:</span>
+                  <span class="value">{{ committee.current_members }}/{{ committee.max_members }}</span>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+      </section>
+    }
+  </main>
+</div>

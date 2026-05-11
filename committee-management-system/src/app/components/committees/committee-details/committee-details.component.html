@@ -1,0 +1,218 @@
+<div class="committee-details-container">
+  <div class="header">
+    <button class="back-btn" (click)="goBack()">← Back to Dashboard</button>
+  </div>
+
+  @if (isLoading()) {
+    <div class="loading">Loading committee details...</div>
+  } @else if (committee()) {
+    <div class="committee-main">
+      <div class="committee-header">
+        <div class="title-section">
+          <h1>{{ committee().name }}</h1>
+          <span class="status-badge" [class]="'status-' + committee().status">
+            {{ committee().status }}
+          </span>
+        </div>
+        <div class="creator-section">
+          <h3>Created by</h3>
+          <p class="creator-name">{{ committee().created_by?.full_name }}</p>
+          @if (committee().created_by?.reputation_score !== undefined) {
+            <p class="reputation">⭐ Reputation: {{ committee().created_by.reputation_score }}</p>
+          }
+        </div>
+      </div>
+
+      <p class="description">{{ committee().description }}</p>
+
+      <div class="committee-stats">
+        <div class="stat-card">
+          <span class="label">Monthly Amount</span>
+          <span class="value">{{ committee().monthly_amount | currency }}</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Duration</span>
+          <span class="value">{{ committee().duration_months }} months</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Total Pool</span>
+          <span class="value">{{ (committee().monthly_amount * committee().duration_months * committee().max_members) | currency }}</span>
+        </div>
+        <div class="stat-card">
+          <span class="label">Members</span>
+          <span class="value">{{ committee().current_members }}/{{ committee().max_members }}</span>
+        </div>
+      </div>
+
+      <div class="progress-section">
+        <h3>Committee Progress</h3>
+        <div class="progress-bar">
+          <div class="progress-fill" [style.width.%]="getProgressPercentage()"></div>
+        </div>
+        <p class="progress-text">{{ committee().current_members }}/{{ committee().max_members }} members joined</p>
+      </div>
+
+      <div class="tracking-section">
+        <div class="tracking-card">
+          <h4>Pending Payments</h4>
+          <p class="number">{{ getTotalPending() }}</p>
+        </div>
+        <div class="tracking-card">
+          <h4>Completed Payments</h4>
+          <p class="number">{{ getTotalCompleted() }}</p>
+        </div>
+        @if (getNextMember()) {
+          <div class="tracking-card">
+            <h4>Next in Line</h4>
+            <p class="name">{{ getNextMember()?.user?.full_name }}</p>
+          </div>
+        }
+      </div>
+
+      <div class="members-section">
+        <div class="section-header">
+          <h2>Committee Members</h2>
+          @if (isCreator()) {
+            <button
+              class="add-member-btn"
+              (click)="toggleAddMemberForm()"
+            >
+              {{ showAddMemberForm() ? '✕ Cancel' : '+ Add Member' }}
+            </button>
+          }
+        </div>
+
+        @if (showAddMemberForm()) {
+          <div class="add-member-form">
+            @if (formError()) {
+              <div class="error-message">{{ formError() }}</div>
+            }
+
+            <div class="form-group">
+              <label for="email">Member Email</label>
+              <input
+                id="email"
+                type="email"
+                [value]="newMemberEmail()"
+                (input)="newMemberEmail.set($event.target.value)"
+                placeholder="Enter member's email"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="transactionId">Transaction ID</label>
+              <input
+                id="transactionId"
+                type="text"
+                [value]="newMemberTransactionId()"
+                (input)="newMemberTransactionId.set($event.target.value)"
+                placeholder="Enter transaction ID"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="iban">IBAN</label>
+              <input
+                id="iban"
+                type="text"
+                [value]="newMemberIban()"
+                (input)="newMemberIban.set($event.target.value)"
+                placeholder="Enter IBAN"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="bankAccountId">Bank Account ID</label>
+              <input
+                id="bankAccountId"
+                type="text"
+                [value]="newMemberBankAccountId()"
+                (input)="newMemberBankAccountId.set($event.target.value)"
+                placeholder="Enter bank account ID"
+              />
+            </div>
+
+            <button
+              class="submit-btn"
+              (click)="handleAddMember()"
+            >
+              Add Member
+            </button>
+          </div>
+        }
+
+        @if (members().length === 0) {
+          <p class="empty-message">No members yet</p>
+        } @else {
+          <div class="members-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th>Payment Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (member of members(); track member.id) {
+                  <tr [class]="'status-' + member.status">
+                    <td>{{ member.order_number }}</td>
+                    <td>{{ member.user?.full_name || 'Unknown' }}</td>
+                    <td>{{ member.user?.email || 'N/A' }}</td>
+                    <td class="status">{{ member.status }}</td>
+                    <td class="payment-details">
+                      <div class="detail">
+                        <strong>IBAN:</strong> {{ member.iban }}
+                      </div>
+                      <div class="detail">
+                        <strong>Account:</strong> {{ member.bank_account_id }}
+                      </div>
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+
+      <div class="transactions-section">
+        <h2>Transaction History</h2>
+        @if (transactions().length === 0) {
+          <p class="empty-message">No transactions yet</p>
+        } @else {
+          <div class="transactions-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Month</th>
+                  <th>Amount</th>
+                  <th>From</th>
+                  <th>To</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (transaction of transactions(); track transaction.id) {
+                  <tr [class]="'status-' + transaction.status">
+                    <td>{{ formatDate(transaction.created_at) }}</td>
+                    <td>{{ transaction.month }}</td>
+                    <td>{{ transaction.amount | currency }}</td>
+                    <td>Member {{ transaction.from_member_id }}</td>
+                    <td>Member {{ transaction.to_member_id }}</td>
+                    <td class="status">{{ transaction.status }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+    </div>
+  } @else {
+    <div class="error-message">Committee not found</div>
+  }
+</div>

@@ -1,0 +1,398 @@
+.committee-details-container {
+  min-height: 100vh;
+  background-color: var(--bg-secondary);
+  padding: 1.5rem;
+}
+
+.header {
+  max-width: 1200px;
+  margin: 0 auto 2rem;
+}
+
+.back-btn {
+  background-color: transparent;
+  color: var(--primary-color);
+  padding: 0.5rem 0;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95rem;
+  transition: color 0.2s;
+}
+
+.back-btn:hover {
+  color: var(--secondary-color);
+}
+
+.loading, .error-message {
+  text-align: center;
+  padding: 2rem;
+  background: white;
+  border-radius: 12px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.committee-main {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.committee-header {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow);
+}
+
+.title-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.title-section h1 {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.status-badge {
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.status-active {
+  background: rgba(37, 99, 235, 0.1);
+  color: #1e40af;
+}
+
+.status-completed {
+  background: rgba(22, 163, 74, 0.1);
+  color: #15803d;
+}
+
+.creator-section {
+  padding: 1rem;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  margin-top: 1rem;
+}
+
+.creator-section h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.9rem;
+  color: var(--text-light);
+  text-transform: uppercase;
+}
+
+.creator-name {
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+  margin: 0 0 0.5rem 0;
+}
+
+.reputation {
+  font-size: 0.9rem;
+  color: #f59e0b;
+  margin: 0;
+}
+
+.description {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  margin-bottom: 2rem;
+  line-height: 1.8;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow);
+}
+
+.committee-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.stat-card {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+
+.stat-card .label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-light);
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+
+.stat-card .value {
+  display: block;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--primary-color);
+}
+
+.progress-section {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow);
+}
+
+.progress-section h3 {
+  margin: 0 0 1rem 0;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 12px;
+  background: var(--bg-tertiary);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+  transition: width 0.3s ease;
+  border-radius: 999px;
+}
+
+.progress-text {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.tracking-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.tracking-card {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  text-align: center;
+  box-shadow: var(--shadow);
+}
+
+.tracking-card h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--text-light);
+  text-transform: uppercase;
+}
+
+.tracking-card .number {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin: 0;
+}
+
+.tracking-card .name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.members-section, .transactions-section {
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  margin-bottom: 2rem;
+  box-shadow: var(--shadow);
+}
+
+.members-section h2, .transactions-section h2 {
+  margin: 0 0 1.5rem 0;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+}
+
+.section-header h2 {
+  margin: 0;
+}
+
+.add-member-btn {
+  background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+  color: white;
+  padding: 0.625rem 1.25rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 0.2s;
+}
+
+.add-member-btn:hover {
+  transform: translateY(-2px);
+}
+
+.add-member-form {
+  background: var(--bg-tertiary);
+  padding: 1.5rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.form-group input {
+  width: 100%;
+  padding: 0.625rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+.form-group input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.add-member-form .submit-btn {
+  width: 100%;
+  background: var(--success-color);
+  color: white;
+  padding: 0.75rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.add-member-form .submit-btn:hover {
+  background: #15803d;
+}
+
+.members-table, .transactions-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+}
+
+.members-table thead, .transactions-table thead {
+  background: var(--bg-tertiary);
+}
+
+.members-table th, .transactions-table th {
+  padding: 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-color);
+}
+
+.members-table td, .transactions-table td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.members-table tbody tr:hover, .transactions-table tbody tr:hover {
+  background: var(--bg-secondary);
+}
+
+.members-table tr.status-active {
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.members-table tr.status-completed {
+  background: rgba(22, 163, 74, 0.05);
+}
+
+.members-table tr.status-pending {
+  background: rgba(234, 88, 12, 0.05);
+}
+
+.payment-details {
+  font-size: 0.85rem;
+}
+
+.payment-details .detail {
+  margin-bottom: 0.25rem;
+}
+
+.payment-details strong {
+  font-weight: 600;
+}
+
+.empty-message {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+}
+
+.transactions-table tr.status-pending {
+  background: rgba(234, 88, 12, 0.05);
+}
+
+.transactions-table tr.status-completed {
+  background: rgba(22, 163, 74, 0.05);
+}
+
+@media (max-width: 768px) {
+  .committee-details-container {
+    padding: 1rem;
+  }
+
+  .committee-header {
+    padding: 1rem;
+  }
+
+  .title-section {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .committee-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .tracking-section {
+    grid-template-columns: 1fr;
+  }
+
+  .members-table, .transactions-table {
+    font-size: 0.9rem;
+  }
+
+  .members-table th, .transactions-table th,
+  .members-table td, .transactions-table td {
+    padding: 0.75rem;
+  }
+}

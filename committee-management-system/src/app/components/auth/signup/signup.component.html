@@ -1,0 +1,83 @@
+<div class="signup-container">
+  <div class="signup-box">
+    <h1>Committee Management System</h1>
+    <h2>Create Account</h2>
+
+    @if (error()) {
+      <div class="error-message">{{ error() }}</div>
+    }
+
+    <form (ngSubmit)="handleSignup()">
+      <div class="form-group">
+        <label for="fullName">Full Name</label>
+        <input
+          id="fullName"
+          type="text"
+          [value]="fullName()"
+          (input)="fullName.set($event.target.value)"
+          placeholder="Enter your full name"
+          required
+          [disabled]="isLoading()"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          [value]="email()"
+          (input)="email.set($event.target.value)"
+          placeholder="Enter your email"
+          required
+          [disabled]="isLoading()"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          [value]="password()"
+          (input)="password.set($event.target.value)"
+          placeholder="Enter your password (min 6 characters)"
+          required
+          [disabled]="isLoading()"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="confirmPassword">Confirm Password</label>
+        <input
+          id="confirmPassword"
+          type="password"
+          [value]="confirmPassword()"
+          (input)="confirmPassword.set($event.target.value)"
+          placeholder="Confirm your password"
+          required
+          [disabled]="isLoading()"
+        />
+      </div>
+
+      <button
+        type="submit"
+        [disabled]="isLoading()"
+        class="submit-btn"
+      >
+        {{ isLoading() ? 'Creating account...' : 'Sign Up' }}
+      </button>
+    </form>
+
+    <p class="login-link">
+      Already have an account?
+      <button
+        type="button"
+        class="link-btn"
+        (click)="navigateToLogin()"
+      >
+        Login
+      </button>
+    </p>
+  </div>
+</div>

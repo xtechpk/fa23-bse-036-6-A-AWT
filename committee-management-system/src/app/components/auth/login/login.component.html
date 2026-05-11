@@ -1,0 +1,57 @@
+<div class="login-container">
+  <div class="login-box">
+    <h1>Committee Management System</h1>
+    <h2>Login</h2>
+
+    @if (error()) {
+      <div class="error-message">{{ error() }}</div>
+    }
+
+    <form (ngSubmit)="handleLogin()">
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          [value]="email()"
+          (input)="email.set($event.target.value)"
+          placeholder="Enter your email"
+          required
+          [disabled]="isLoading()"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          [value]="password()"
+          (input)="password.set($event.target.value)"
+          placeholder="Enter your password"
+          required
+          [disabled]="isLoading()"
+        />
+      </div>
+
+      <button
+        type="submit"
+        [disabled]="isLoading()"
+        class="submit-btn"
+      >
+        {{ isLoading() ? 'Logging in...' : 'Login' }}
+      </button>
+    </form>
+
+    <p class="signup-link">
+      Don't have an account?
+      <button
+        type="button"
+        class="link-btn"
+        (click)="navigateToSignup()"
+      >
+        Sign up
+      </button>
+    </p>
+  </div>
+</div>
