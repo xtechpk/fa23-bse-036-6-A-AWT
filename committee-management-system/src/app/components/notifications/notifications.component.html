@@ -2,17 +2,22 @@
   <div class="header">
     <button class="back-btn" (click)="goBack()">← Back to Dashboard</button>
     <h1>Notifications</h1>
-    <button
-      class="mark-all-read-btn"
-      (click)="markAllAsRead()"
-      *ngIf="notifications().some(n => !n.read)"
-    >
-      Mark all as read
-    </button>
+    @if (hasUnreadNotifications()) {
+      <button
+        class="mark-all-read-btn"
+        (click)="markAllAsRead()"
+      >
+        Mark all as read
+      </button>
+    }
   </div>
 
   @if (isLoading()) {
     <div class="loading">Loading notifications...</div>
+  } @else if (loadError()) {
+    <div class="empty-state">
+      <p>{{ loadError() }}</p>
+    </div>
   } @else if (notifications().length === 0) {
     <div class="empty-state">
       <p>No notifications yet</p>

@@ -71,7 +71,10 @@ export class AuthService {
       return { success: true, user: data.user };
     } catch (error) {
       console.error('Sign in error:', error);
-      return { success: false, error };
+      const err: any = error || {};
+      const message = err.message || err.error || JSON.stringify(err);
+      const code = err.code || err.name || null;
+      return { success: false, error: { message, code } };
     }
   }
 
@@ -104,6 +107,26 @@ export class AuthService {
       if (error) throw error;
     } catch (error) {
       console.error('Create user profile error:', error);
+      // If public.users table doesn't exist on the project, try inserting into `profiles` as a fallback
+      const err: any = error || {};
+      const msg = err.message || '';
+      if (msg.includes("Could not find the table 'public.users'") || err.code === 'PGRST205') {
+        try {
+          const { error: err2 } = await this.supabase.from('profiles').insert([
+            {
+              id: userId,
+              email,
+              full_name: fullName,
+              reputation_score: 0,
+              created_at: new Date().toISOString()
+            }
+          ]);
+
+          if (err2) console.error('Fallback insert into profiles failed:', err2);
+        } catch (e) {
+          console.error('Fallback create profile error:', e);
+        }
+      }
     }
   }
 

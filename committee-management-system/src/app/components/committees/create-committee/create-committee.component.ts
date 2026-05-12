@@ -47,8 +47,8 @@ export class CreateCommitteeComponent {
       return;
     }
 
-    if (this.maxMembers() < 2 || this.maxMembers() > 11) {
-      this.error.set('Maximum members must be between 2 and 11 (including you)');
+    if (this.maxMembers() < 2 || this.maxMembers() > 50) {
+      this.error.set('Maximum members must be between 2 and 50');
       return;
     }
 
@@ -85,7 +85,16 @@ export class CreateCommitteeComponent {
         this.router.navigate(['/dashboard']);
       }, 1500);
     } else {
-      this.error.set('Failed to create committee. Please try again.');
+      const err: any = result.error || {};
+      if (err.message) {
+        this.error.set(err.message);
+      } else {
+        try {
+          this.error.set(JSON.stringify(err));
+        } catch (e) {
+          this.error.set('Failed to create committee. Please try again.');
+        }
+      }
     }
 
     this.isLoading.set(false);

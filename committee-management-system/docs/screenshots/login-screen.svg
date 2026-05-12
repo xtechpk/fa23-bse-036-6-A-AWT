@@ -1,0 +1,16 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Login screen preview">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#eef2ff"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="420" y="120" width="440" height="480" rx="18" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="640" y="190" text-anchor="middle" font-size="40" font-family="Arial, sans-serif" fill="#0f172a">Login</text>
+  <rect x="480" y="250" width="320" height="54" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="480" y="330" width="320" height="54" rx="8" fill="#f8fafc" stroke="#94a3b8"/>
+  <rect x="480" y="420" width="320" height="56" rx="10" fill="#2563eb"/>
+  <text x="640" y="455" text-anchor="middle" font-size="24" font-family="Arial, sans-serif" fill="#ffffff">Sign In</text>
+  <text x="640" y="670" text-anchor="middle" font-size="22" font-family="Arial, sans-serif" fill="#334155">Route: /login</text>
+</svg>

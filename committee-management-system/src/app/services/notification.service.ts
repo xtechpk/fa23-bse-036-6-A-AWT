@@ -23,7 +23,13 @@ export class NotificationService {
 
   constructor() {}
 
-  async loadNotifications(userId: string) {
+  async loadNotifications(userId: string): Promise<{ success: boolean; error?: unknown }> {
+    if (!userId) {
+      this.notifications.set([]);
+      this.unreadCount.set(0);
+      return { success: false, error: 'Missing user id' };
+    }
+
     try {
       const { data, error } = await this.supabase
         .from('notifications')
@@ -34,8 +40,10 @@ export class NotificationService {
       if (error) throw error;
       this.notifications.set(data || []);
       this.updateUnreadCount();
+      return { success: true };
     } catch (error) {
       console.error('Load notifications error:', error);
+      return { success: false, error };
     }
   }
 
@@ -65,7 +73,7 @@ export class NotificationService {
     }
   }
 
-  async markAsRead(notificationId: string) {
+  async markAsRead(notificationId: string, userId?: string) {
     try {
       const { error } = await this.supabase
         .from('notifications')
@@ -73,7 +81,13 @@ export class NotificationService {
         .eq('id', notificationId);
 
       if (error) throw error;
-      await this.loadNotifications(this.notifications()[0]?.user_id);
+
+      const resolvedUserId =
+        userId || this.notifications().find(notification => notification.id === notificationId)?.user_id;
+
+      if (resolvedUserId) {
+        await this.loadNotifications(resolvedUserId);
+      }
     } catch (error) {
       console.error('Mark notification as read error:', error);
     }

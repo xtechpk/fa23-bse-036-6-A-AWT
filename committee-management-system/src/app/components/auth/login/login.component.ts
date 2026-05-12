@@ -35,7 +35,20 @@ export class LoginComponent {
     if (result.success) {
       this.router.navigate(['/dashboard']);
     } else {
-      this.error.set('Login failed. Please check your credentials.');
+      const err: any = result.error || {};
+      // Prefer explicit server message if available
+      if (err.message) {
+        // Handle known codes/messages
+        if (err.code === 'email_not_confirmed' || (typeof err.message === 'string' && err.message.toLowerCase().includes('email not confirmed'))) {
+          this.error.set('Email not confirmed. Please check your email for the confirmation link.');
+        } else if (err.code === 'PGRST205' || (typeof err.message === 'string' && err.message.includes("Could not find the table 'public.users'"))) {
+          this.error.set('Server misconfiguration: users table not found. Run database migrations or contact the admin.');
+        } else {
+          this.error.set(err.message);
+        }
+      } else {
+        this.error.set('Login failed. Please check your credentials.');
+      }
     }
 
     this.isLoading.set(false);

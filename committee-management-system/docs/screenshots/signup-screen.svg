@@ -1,0 +1,17 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Signup screen preview">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f0fdf4"/>
+      <stop offset="100%" stop-color="#dcfce7"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="400" y="90" width="480" height="540" rx="18" fill="#ffffff" stroke="#bbf7d0"/>
+  <text x="640" y="165" text-anchor="middle" font-size="40" font-family="Arial, sans-serif" fill="#14532d">Create Account</text>
+  <rect x="470" y="220" width="340" height="52" rx="8" fill="#f8fafc" stroke="#86efac"/>
+  <rect x="470" y="295" width="340" height="52" rx="8" fill="#f8fafc" stroke="#86efac"/>
+  <rect x="470" y="370" width="340" height="52" rx="8" fill="#f8fafc" stroke="#86efac"/>
+  <rect x="470" y="455" width="340" height="56" rx="10" fill="#16a34a"/>
+  <text x="640" y="490" text-anchor="middle" font-size="24" font-family="Arial, sans-serif" fill="#ffffff">Sign Up</text>
+  <text x="640" y="670" text-anchor="middle" font-size="22" font-family="Arial, sans-serif" fill="#166534">Route: /signup</text>
+</svg>

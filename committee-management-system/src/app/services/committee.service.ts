@@ -82,7 +82,6 @@ export class CommitteeService {
             duration_months: durationMonths,
             monthly_amount: monthlyAmount,
             max_members: maxMembers,
-            current_members: 1,
             status: 'active',
             created_at: new Date().toISOString()
           }
@@ -92,17 +91,9 @@ export class CommitteeService {
 
       if (error) throw error;
 
-      // Add creator as first member
-      if (data) {
-        await this.addMember(
-          data.id,
-          creatorId,
-          1,
-          '',
-          '',
-          ''
-        );
-      }
+      // NOTE: Creator/Holder is NOT automatically added as a member.
+      // The creator_id field in committees table identifies the committee admin.
+      // They only become a member if they explicitly opt-in via addMember().
 
       await this.loadCommittees();
       return { success: true, committee: data };
@@ -140,11 +131,20 @@ export class CommitteeService {
 
       if (error) throw error;
 
-      // Update committee member count
-      await this.supabase
-        .from('committees')
-        .update({ current_members: orderNumber })
-        .eq('id', committeeId);
+      // Update committee member count (some deployments may not have `current_members` column)
+      try {
+        await this.supabase
+          .from('committees')
+          .update({ current_members: orderNumber })
+          .eq('id', committeeId);
+      } catch (e) {
+        const err: any = e || {};
+        const msg = err.message || '';
+        // Ignore error if column doesn't exist, log otherwise
+        if (!msg.includes("Could not find the 'current_members'")) {
+          console.error('Update committee current_members error:', e);
+        }
+      }
 
       await this.loadCommittees();
       return { success: true, member: data };

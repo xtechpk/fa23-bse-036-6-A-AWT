@@ -1,59 +1,147 @@
-# CommitteeManagementSystem
+# Committee Management System
 
-This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.10.
+This project is an Angular frontend for a committee (rotating savings/pool) management system that uses Supabase as its backend (authentication, Postgres DB, and storage).
 
-## Development server
+This README explains setup, Supabase integration, and debugging steps so a reviewer can understand and run the project without reading the source code.
 
-To start a local development server, run:
+## Table of Contents
+
+- Project overview
+- Supabase setup (create project, DB schema, RLS and policies)
+- Local configuration (required keys and where to place them)
+- Running the app
+- Common issues and debugging
+- How to test committee creation (with provided credentials)
+- Data model summary (tables and important columns)
+- Security notes and recommended production changes
+
+## Project overview
+
+- Framework: Angular v21
+- Supabase client: `@supabase/supabase-js`
+- Frontend-only app (no separate backend). All DB operations go directly to Supabase using policies.
+- Key features: signup/login, create committees, join committees, basic notifications.
+
+## Supabase setup
+
+1. Create a Supabase project at https://app.supabase.com/
+2. Get the project's `URL` and `anon` (publishable) key from Project Settings → API.
+	- Use the *anon/public* key in the browser app. Do NOT use the `service_role` key in the frontend.
+3. Run the SQL schema (use the `database.sql` file provided in the `src` folder or run manually in SQL editor):
+	- Create `users`, `committees`, `committee_members`, `transactions`, `notifications` tables.
+	- Enable Row Level Security (RLS) and add policies that allow authenticated inserts for committees and controlled access for users/notifications.
+
+Recommended minimal policies for `committees` (example):
+
+- Allow anyone to SELECT: `USING (true)`
+- Allow authenticated users to INSERT: `WITH CHECK (auth.role() = 'authenticated' AND auth.uid() = creator_id)`
+  - Note: If you use this stricter policy, ensure the signed-in user's `auth.uid()` equals the `creator_id` you insert. Otherwise the insert will be rejected.
+
+If you change policies to simply require `auth.role() = 'authenticated'` without checking `creator_id`, inserts will be allowed but less strict.
+
+## Local configuration (where to put keys)
+
+File: `src/environments/environment.ts` contains the Supabase config used by the app during development:
+
+- `environment.supabase.url` — your Supabase project URL
+- `environment.supabase.anonKey` — the project's anon (publishable) key
+
+Important: the app calls `supabase.auth.getSession()` during startup. If the `anonKey` is incorrect (for example, if you accidentally paste a JWT rather than the publishable anon key), authentication and data requests will fail.
+
+Best practice: keep keys out of source control. For class exercises you may place them in `environment.ts`, but for production use environment variables or secret injection.
+
+## Running the app
+
+Install dependencies and start the dev server:
 
 ```bash
-ng serve
+npm install
+npm start
 ```
 
-Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
+Open `http://localhost:4200`.
 
-## Code scaffolding
+## How to test committee creation (manual steps)
 
-Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
+1. Ensure Supabase `URL` and `anon` key are set in `src/environments/environment.ts`.
+2. Start the app and go to the Signup page.
+3. Register a user (or use existing credentials). Example credentials you provided for testing:
+	- Email: `yesalihassan@gmail.com`
+	- Password: `1234abcd`
 
-```bash
-ng generate component component-name
+4. After signing in, open the Create Committee page and fill the form.
+	- Name, Description, Duration (months), Monthly amount, Max members.
+5. Click Create. If the UI reports "User not authenticated" or "Failed to create committee", follow the debugging steps below.
+
+## Debugging common failures
+
+1. "User not authenticated"
+	- Open browser DevTools console. Check if `Auth initialization error:` or `Sign in error:` are logged by the app (these are printed to the console by `AuthService`).
+	- Ensure `environment.supabase.anonKey` is the project anon key (publishable). If you replaced the anon key with a JWT (a token that starts with `eyJhbGci...`), that is NOT the publishable key and will cause auth failures.
+
+2. "Failed to create committee"
+	- The UI was updated to show the Supabase error message. Copy the displayed error text.
+	- Common causes:
+	  - Row Level Security (RLS) policy denied the insert. Check your `committees` table policies in Supabase SQL editor.
+	  - The `creator_id` you insert does not match `auth.uid()` when your policy requires that check.
+	  - Required columns missing or type mismatch (e.g., inserting a string into a numeric column).
+
+3. Inspect network requests
+	- In DevTools → Network tab, filter requests to `.../rest/v1/committees` or `.../auth/v1` and review request and response bodies.
+	- Supabase errors are returned in the response JSON; the app now surfaces the error message in the Create Committee UI.
+
+4. Check console logs
+	- `Create committee error:` and `Auth initialization error:` will be printed in the console by the app services. Use that output to identify the underlying issue.
+
+## If you get an RLS/permission error
+
+- Option A: Temporarily relax the `INSERT` policy to `WITH CHECK (auth.role() = 'authenticated')` to confirm the insert works.
+- Option B: Keep the stricter `WITH CHECK (auth.role() = 'authenticated' AND auth.uid() = creator_id)` policy and ensure the frontend inserts `creator_id` equal to the signed-in user's `auth.uid()` value (the app already does this by using the signed-in user's id).
+
+## Data model summary
+
+- `users` — user profiles
+  - `id` (UUID), `email`, `full_name`, `reputation_score`
+- `committees` — committee meta info
+  - `id`, `creator_id` (FK users.id), `name`, `description`, `duration_months`, `monthly_amount`, `max_members`, `current_members`, `status`
+- `committee_members` — member records
+  - `committee_id`, `user_id`, `order_number`, `status`
+- `transactions` — payments for each month
+
+## Example payload for manual insert
+
+```json
+[{
+  "creator_id":"2cbea8ed-f6a1-466f-94b9-2e8a24789fc0",
+  "name":"cwdcdfr",
+  "description":"cdfvdffdvv",
+  "duration_months":10,
+  "monthly_amount":100,
+  "max_members":10,
+  "current_members":0,
+  "status":"active",
+  "created_at":"2026-05-12T18:29:52.727Z"
+}]
 ```
 
-For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
+If you insert this manually in Supabase SQL or via the REST API, ensure the `creator_id` matches a real `users.id` in your DB and that your RLS policy allows the insert.
 
-```bash
-ng generate --help
-```
+## Security & production recommendations
 
-## Building
+- Never store the `service_role` key in frontend code. Only use `anon` key in the browser.
+- Move API keys to environment variables and inject them during the build or via server-side config.
+- Use stricter RLS policies that validate `creator_id` matches `auth.uid()` for insert/update operations.
 
-To build the project run:
+## What I changed in the code to help debug
 
-```bash
-ng build
-```
+- The Create Committee UI now shows Supabase error messages returned from the server (so you can read the exact reason for failure).
+- I set the `environment.supabase.anonKey` to the key you provided earlier; verify that key is the project anon publishable key (not a one-time JWT/session token).
 
-This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
+## Next steps I can take for you
 
-## Running unit tests
+- I can run the app locally and try signing in with the credentials you provided and attempt to create a committee, then paste the exact error text here.
+- I can add a small diagnostic page that displays `auth.getSession()` and the current `auth.uid()` to confirm authentication state.
 
-To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
+---
 
-```bash
-ng test
-```
-
-## Running end-to-end tests
-
-For end-to-end (e2e) testing, run:
-
-```bash
-ng e2e
-```
-
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
-
-## Additional Resources
-
-For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.
+If you want, I can now attempt to run the app locally and use the supplied credentials to reproduce the error and show exact Supabase responses. Do you want me to proceed?

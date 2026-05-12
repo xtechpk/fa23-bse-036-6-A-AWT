@@ -1,0 +1,12 @@
+<svg width="1280" height="720" viewBox="0 0 1280 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Create committee screen preview">
+  <rect width="1280" height="720" fill="#fff7ed"/>
+  <rect x="120" y="70" width="1040" height="580" rx="18" fill="#ffffff" stroke="#fdba74"/>
+  <text x="640" y="145" text-anchor="middle" font-size="38" font-family="Arial, sans-serif" fill="#9a3412">Create Committee</text>
+  <rect x="220" y="200" width="840" height="56" rx="8" fill="#fffbeb" stroke="#fb923c"/>
+  <rect x="220" y="280" width="840" height="120" rx="8" fill="#fffbeb" stroke="#fb923c"/>
+  <rect x="220" y="430" width="390" height="56" rx="8" fill="#fffbeb" stroke="#fb923c"/>
+  <rect x="670" y="430" width="390" height="56" rx="8" fill="#fffbeb" stroke="#fb923c"/>
+  <rect x="220" y="525" width="840" height="58" rx="10" fill="#ea580c"/>
+  <text x="640" y="560" text-anchor="middle" font-size="24" font-family="Arial, sans-serif" fill="#ffffff">Submit Committee</text>
+  <text x="640" y="690" text-anchor="middle" font-size="22" font-family="Arial, sans-serif" fill="#9a3412">Route: /create-committee</text>
+</svg>
